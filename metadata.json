@@ -1,6 +1,6 @@
 {
   "name": "Telegram Pool Cards Game",
-  "description": "Production-ready Telegram Mini App pool cards game with authoritative game engine, operator controls, immutable wallet ledger, manual verification, and Neon PostgreSQL support.",
+  "description": "Fun, energetic multiplayer Ethiopian Pool Cards game with arcade gaming UI, player levels, XP progression, daily lucky box rewards, 3D pool ball physics, and instant Telebirr wallet payouts.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

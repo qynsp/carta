@@ -2,8 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { AlertTriangle, CheckCircle2, RefreshCw, Volume2, ShieldCheck, ArrowLeft, Play } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
+import { useLanguage } from '../context/LanguageContext';
 import { GamePublicState } from '../types';
 import { PoolBall } from './PoolBall';
+import { soundFx } from '../utils/audio';
 
 interface OperatorBoardProps {
   initialGameId?: string;
@@ -13,6 +15,7 @@ interface OperatorBoardProps {
 export const OperatorBoard: React.FC<OperatorBoardProps> = ({ initialGameId, onBack }) => {
   const { user, token } = useAuth();
   const { subscribeToGame, unsubscribeFromGame, activeGame } = useSocket();
+  const { t, language } = useLanguage();
 
   const [activeGames, setActiveGames] = useState<GamePublicState[]>([]);
   const [selectedGameId, setSelectedGameId] = useState<string>(initialGameId || '');
@@ -61,6 +64,12 @@ export const OperatorBoard: React.FC<OperatorBoardProps> = ({ initialGameId, onB
     setError(null);
     setShotNotice(null);
 
+    if (isScratch) {
+      soundFx.playScratch();
+    } else {
+      soundFx.playBallPocket();
+    }
+
     try {
       const res = await fetch(`/api/operator/games/${selectedGameId}/shot`, {
         method: 'POST',
@@ -77,7 +86,7 @@ export const OperatorBoard: React.FC<OperatorBoardProps> = ({ initialGameId, onB
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to submit shot event');
 
-      setShotNotice(data.result?.message || 'Shot reported successfully');
+      setShotNotice(data.result?.message || (language === 'am' ? 'ምቱ በትክክል ተመዝግቧል' : 'Shot reported successfully'));
       setTimeout(() => setShotNotice(null), 4000);
     } catch (err: any) {
       setError(err.message || 'Shot reporting error');
@@ -96,14 +105,14 @@ export const OperatorBoard: React.FC<OperatorBoardProps> = ({ initialGameId, onB
             className="bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-300 px-4 py-2 rounded-2xl transition-colors flex items-center gap-2 text-xs font-bold cursor-pointer"
           >
             <ArrowLeft className="w-4 h-4 text-emerald-400" />
-            <span>BACK TO TABLE</span>
+            <span>{t('backToLobby')}</span>
           </button>
         ) : (
           <div className="flex items-center gap-2 text-white">
             <div className="bg-emerald-500 p-1.5 rounded-xl text-zinc-950">
               <Play className="w-4 h-4 fill-current" />
             </div>
-            <span className="text-sm font-black tracking-wider uppercase">Table Operator Keypad</span>
+            <span className="text-sm font-black tracking-wider uppercase">{t('operator')}</span>
           </div>
         )}
 
@@ -112,7 +121,7 @@ export const OperatorBoard: React.FC<OperatorBoardProps> = ({ initialGameId, onB
           className="bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-300 px-3.5 py-2 rounded-2xl transition-colors text-xs font-bold flex items-center gap-1.5 cursor-pointer"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          <span>Refresh Tables</span>
+          <span>{language === 'am' ? 'አድስ' : 'Refresh Tables'}</span>
         </button>
       </div>
 
@@ -120,12 +129,14 @@ export const OperatorBoard: React.FC<OperatorBoardProps> = ({ initialGameId, onB
       <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
         {/* Table Selector Box (col-span-5) */}
         <div className="md:col-span-5 bg-zinc-900/60 border border-zinc-800 rounded-3xl p-5 sm:p-6 space-y-3">
-          <p className="text-zinc-400 text-xs uppercase tracking-widest font-semibold">
-            Select Active Table
+          <p className="text-zinc-400 text-xs uppercase tracking-widest font-black">
+            {language === 'am' ? 'ጠረጴዛ ይምረጡ' : 'Select Active Table'}
           </p>
           {activeGames.length === 0 ? (
-            <div className="text-xs text-zinc-500 py-3">
-              No active matches in progress right now. Start a match from the Games tab!
+            <div className="text-xs text-zinc-500 py-3 font-medium">
+              {language === 'am'
+                ? 'በአሁኑ ሰዓት ንቁ ጨዋታ የለም። ከጨዋታዎች ገጽ አዲስ ይጀምሩ!'
+                : 'No active matches in progress right now.'}
             </div>
           ) : (
             <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
@@ -139,10 +150,10 @@ export const OperatorBoard: React.FC<OperatorBoardProps> = ({ initialGameId, onB
                       : 'bg-zinc-950/40 border-zinc-800 hover:border-zinc-700 text-zinc-400'
                   }`}
                 >
-                  <div className="font-bold text-sm text-white truncate">{g.name}</div>
-                  <div className="text-xs text-emerald-400 flex justify-between mt-1">
+                  <div className="font-black text-sm text-white truncate">{g.name}</div>
+                  <div className="text-xs text-emerald-400 flex justify-between mt-1 font-bold">
                     <span>{g.tableNumber || 'Table 1'}</span>
-                    <span>Shooter: {g.currentTurnUsername}</span>
+                    <span>{g.currentTurnUsername}</span>
                   </div>
                 </button>
               ))}
@@ -156,26 +167,28 @@ export const OperatorBoard: React.FC<OperatorBoardProps> = ({ initialGameId, onB
             <>
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-zinc-400 text-xs uppercase tracking-widest font-semibold">
-                    Current Shooter on Table
+                  <p className="text-zinc-400 text-xs uppercase tracking-widest font-black">
+                    {language === 'am' ? 'በጠረጴዛው ላይ ያለው ተኳሽ' : 'Current Shooter'}
                   </p>
                   <h3 className="text-2xl sm:text-3xl font-black text-emerald-400 uppercase tracking-tight mt-1">
                     {currentGame.currentTurnUsername || 'Active Player'}
                   </h3>
                 </div>
                 <span className="px-3 py-1 rounded-full text-xs font-black bg-emerald-500 text-zinc-950 animate-pulse uppercase">
-                  SHOOTING
+                  {language === 'am' ? 'እየመታ ነው' : 'SHOOTING'}
                 </span>
               </div>
 
               <div className="pt-3 border-t border-zinc-800 flex justify-between items-center text-xs text-zinc-400">
-                <span>Match: {currentGame.name}</span>
-                <span className="font-mono text-white font-bold">Pot: {currentGame.winnerPayout} ETB</span>
+                <span>{currentGame.name}</span>
+                <span className="font-mono text-emerald-400 font-bold">{t('prizePot')}: {currentGame.winnerPayout} ETB</span>
               </div>
             </>
           ) : (
             <div className="p-8 text-center text-zinc-500 text-xs my-auto">
-              Select an active table on the left to report live physical pool shots.
+              {language === 'am'
+                ? 'ምቶችን ለመመዝገብ በግራ በኩል ጠረጴዛ ይምረጡ'
+                : 'Select an active table on the left to report shots.'}
             </div>
           )}
         </div>
@@ -191,22 +204,24 @@ export const OperatorBoard: React.FC<OperatorBoardProps> = ({ initialGameId, onB
 
       {error && (
         <div className="p-4 rounded-2xl bg-rose-950/60 border border-rose-800 text-rose-200 text-xs font-bold flex items-center gap-2">
-          <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0" />
+          <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
           <span>{error}</span>
         </div>
       )}
 
-      {/* Bento Operator Keypad Box */}
+      {/* Keypad */}
       {currentGame && currentGame.status === 'ACTIVE' && (
         <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 sm:p-7 space-y-5 shadow-2xl">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="text-emerald-500 font-bold">●</span>
-              <h3 className="text-xs font-bold uppercase tracking-widest text-zinc-300">
-                OPERATOR: BALL SUNK (1–15)
+              <h3 className="text-xs font-black uppercase tracking-widest text-zinc-300">
+                {language === 'am' ? 'የገባች ኳስ ምረጥ (1–15)' : 'SUNK BALL KEYPAD (1–15)'}
               </h3>
             </div>
-            <span className="text-[11px] text-zinc-500">Tap ball when pocketed on table</span>
+            <span className="text-[11px] text-zinc-400">
+              {language === 'am' ? 'ኳሷ ስትገባ ቁጥሯን ይጫኑ' : 'Tap ball when pocketed on table'}
+            </span>
           </div>
 
           {/* Grid of 15 pool balls */}
@@ -219,25 +234,31 @@ export const OperatorBoard: React.FC<OperatorBoardProps> = ({ initialGameId, onB
                   disabled={processing}
                   onClick={() => handleShot(num, false)}
                 />
-                <span className="text-[11px] font-bold text-zinc-400">
-                  {num <= 13 ? (num === 1 ? 'A' : num === 11 ? 'J' : num === 12 ? 'Q' : num === 13 ? 'K' : `Ball ${num}`) : 'Neutral'}
+                <span className="text-[11px] font-black text-zinc-400">
+                  {num <= 13 ? (num === 1 ? 'A (1)' : num === 11 ? 'J (11)' : num === 12 ? 'Q (12)' : num === 13 ? 'K (13)' : `Ball ${num}`) : 'Neutral'}
                 </span>
               </div>
             ))}
           </div>
 
-          {/* Bento Scratch Action Button */}
+          {/* Scratch / Foul Button */}
           <div className="pt-2">
             <button
               onClick={() => handleShot(undefined, true)}
               disabled={processing}
-              className="w-full py-4 rounded-2xl bg-zinc-800 hover:bg-zinc-750 active:scale-[0.99] text-white border border-zinc-700 hover:border-amber-500/50 font-black text-xs sm:text-sm tracking-wider uppercase shadow-xl transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              className="w-full py-4 rounded-2xl bg-zinc-800 hover:bg-zinc-700 active:scale-[0.99] text-white border border-zinc-700 hover:border-amber-500/50 font-black text-xs sm:text-sm tracking-wider uppercase shadow-xl transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
             >
               <span className="text-xl">⚠️</span>
-              <span>SCRATCH (CUE BALL POCKET / FOUL)</span>
+              <span>
+                {language === 'am'
+                  ? 'ስክራች / ቅጣት (ነጭ ኳስ ከገባች ወይም ጥፋት)'
+                  : 'SCRATCH (CUE BALL POCKET / FOUL)'}
+              </span>
             </button>
-            <p className="text-[11px] text-zinc-500 text-center mt-2">
-              Scratch penalizes current shooter with 1 secret card and passes the turn.
+            <p className="text-[11px] text-zinc-500 text-center mt-2 font-medium">
+              {language === 'am'
+                ? 'ስክራች ሲከሰት ተኳሹ ተጨማሪ 1 ካርድ ተቀጥቶ ተራው ያልፋል።'
+                : 'Scratch penalizes current shooter with 1 secret card and passes the turn.'}
             </p>
           </div>
         </div>

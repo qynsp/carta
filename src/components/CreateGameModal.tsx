@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
-import { X, Trophy, Users, Coins, AlertCircle } from 'lucide-react';
+import { X, Trophy, Users, Coins, AlertCircle, ArrowLeft, Sparkles, Plus } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
+import { soundFx } from '../utils/audio';
 
 interface CreateGameModalProps {
   isOpen: boolean;
@@ -14,8 +16,8 @@ export const CreateGameModal: React.FC<CreateGameModalProps> = ({
   onGameCreated,
 }) => {
   const { user, token } = useAuth();
+  const { t, language } = useLanguage();
   const [name, setName] = useState<string>('Friday Night Match');
-  const [maxPlayers, setMaxPlayers] = useState<number>(2);
   const [entryFee, setEntryFee] = useState<number>(50);
   const [tableNumber, setTableNumber] = useState<string>('Table 1');
   const [loading, setLoading] = useState<boolean>(false);
@@ -23,19 +25,20 @@ export const CreateGameModal: React.FC<CreateGameModalProps> = ({
 
   if (!isOpen) return null;
 
-  const totalPot = entryFee * maxPlayers;
-  const platformFee = (totalPot * 5) / 100;
-  const estimatedPayout = totalPot - platformFee;
-
   const userBalance = user?.wallet?.availableBalance || 0;
   const hasEnoughFunds = userBalance >= entryFee;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!token) return;
+    soundFx.playButtonClick();
 
     if (!hasEnoughFunds && entryFee > 0) {
-      setError(`Insufficient wallet balance. You need at least ${entryFee} ETB.`);
+      setError(
+        language === 'am'
+          ? `በቂ ሂሳብ የለዎትም። ቢያንስ ${entryFee} ብር ያስፈልጋል።`
+          : `Insufficient wallet balance. You need at least ${entryFee} ETB.`
+      );
       return;
     }
 
@@ -50,16 +53,16 @@ export const CreateGameModal: React.FC<CreateGameModalProps> = ({
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          name: name.trim() || 'Pool Match',
-          maxPlayers,
+          name: name.trim() || (language === 'am' ? 'የፑል ጨዋታ' : 'Pool Match'),
           entryFee,
-          tableNumber,
+          tableNumber: tableNumber.trim() || 'Table 1',
         }),
       });
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to create game');
 
+      soundFx.playYourTurn();
       onGameCreated(data.game.id);
       onClose();
     } catch (err: any) {
@@ -70,22 +73,45 @@ export const CreateGameModal: React.FC<CreateGameModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-950/80 backdrop-blur-md animate-fadeIn">
-      <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl space-y-4 text-white">
-        {/* Header */}
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-zinc-950/85 backdrop-blur-md overflow-y-auto animate-fadeIn"
+    >
+      <div className="w-full max-w-md bg-[#0f172a] border-2 border-emerald-500/30 rounded-3xl p-5 sm:p-6 shadow-2xl space-y-4 text-white max-h-[88vh] overflow-y-auto my-auto relative">
+        {/* Header with Clear Back Option */}
         <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center">
-              <Trophy className="w-5 h-5" />
-            </div>
+            <button
+              type="button"
+              onClick={() => {
+                soundFx.playButtonClick();
+                onClose();
+              }}
+              className="p-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors cursor-pointer flex items-center gap-1 text-xs font-bold"
+              title={language === 'am' ? 'ተመለስ' : 'Go Back'}
+            >
+              <ArrowLeft className="w-4 h-4 text-emerald-400" />
+              <span>{language === 'am' ? 'ተመለስ' : 'Back'}</span>
+            </button>
             <div>
-              <h3 className="text-lg font-bold tracking-tight text-white">Create Table Match</h3>
-              <p className="text-xs text-zinc-400">Card Pool Table Host</p>
+              <h3 className="text-base sm:text-lg font-black tracking-tight text-white flex items-center gap-1.5">
+                <span>🎱</span>
+                <span>{language === 'am' ? 'አዲስ ጠረጴዛ ክፈት' : 'Host Match Table'}</span>
+              </h3>
+              <p className="text-[11px] text-zinc-400 font-medium">
+                {language === 'am' ? 'ተጫዋቾች በራሳቸው ይቀላቀላሉ' : 'Players join & pot grows dynamically'}
+              </p>
             </div>
           </div>
           <button
-            onClick={onClose}
-            className="p-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white transition-colors cursor-pointer"
+            type="button"
+            onClick={() => {
+              soundFx.playButtonClick();
+              onClose();
+            }}
+            className="p-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -100,62 +126,53 @@ export const CreateGameModal: React.FC<CreateGameModalProps> = ({
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1.5">
-            <label className="text-xs font-bold text-zinc-300">Match Name</label>
+            <label className="text-xs font-black uppercase tracking-wider text-zinc-300">
+              {language === 'am' ? 'የጨዋታው ስም' : 'Match Title'}
+            </label>
             <input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Friday Championship"
+              placeholder={language === 'am' ? 'ምሳሌ፡ የሳምንቱ ውድድር' : 'e.g. Friday Championship'}
               required
-              className="w-full px-4 py-3 rounded-2xl bg-zinc-950 border border-zinc-800 text-sm text-white focus:outline-none focus:border-emerald-500"
+              className="w-full px-4 py-3 rounded-2xl bg-[#080d1a] border border-zinc-800 text-sm text-white focus:outline-none focus:border-emerald-500 font-bold"
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-zinc-300">Players Count</label>
-              <select
-                value={maxPlayers}
-                onChange={(e) => setMaxPlayers(Number(e.target.value))}
-                className="w-full px-4 py-3 rounded-2xl bg-zinc-950 border border-zinc-800 text-sm text-white focus:outline-none focus:border-emerald-500"
-              >
-                <option value={2}>2 Players (1v1)</option>
-                <option value={3}>3 Players</option>
-                <option value={4}>4 Players</option>
-                <option value={5}>5 Players</option>
-                <option value={6}>6 Players</option>
-              </select>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-zinc-300">Table Identifier</label>
-              <input
-                type="text"
-                value={tableNumber}
-                onChange={(e) => setTableNumber(e.target.value)}
-                placeholder="Table 1"
-                required
-                className="w-full px-4 py-3 rounded-2xl bg-zinc-950 border border-zinc-800 text-sm text-white focus:outline-none focus:border-emerald-500"
-              >
-              </input>
-            </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-black uppercase tracking-wider text-zinc-300">
+              {language === 'am' ? 'የጠረጴዛ ቁጥር / መለያ' : 'Table Number / Arena'}
+            </label>
+            <input
+              type="text"
+              value={tableNumber}
+              onChange={(e) => setTableNumber(e.target.value)}
+              placeholder="Table 1"
+              required
+              className="w-full px-4 py-3 rounded-2xl bg-[#080d1a] border border-zinc-800 text-sm text-white focus:outline-none focus:border-emerald-500 font-bold"
+            />
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-xs font-bold text-zinc-300">Entry Fee (ETB)</label>
+            <label className="text-xs font-black uppercase tracking-wider text-zinc-300">
+              {language === 'am' ? 'የአንድ ተጫዋች መግቢያ ክፍያ' : 'Entry Fee Per Player (ETB)'}
+            </label>
             <div className="grid grid-cols-4 gap-2 mb-1.5">
               {[20, 50, 100, 200].map((val) => (
                 <button
                   key={val}
                   type="button"
-                  onClick={() => setEntryFee(val)}
-                  className={`py-2 rounded-2xl text-xs font-bold border transition-all cursor-pointer ${
+                  onClick={() => {
+                    soundFx.playButtonClick();
+                    setEntryFee(val);
+                  }}
+                  className={`py-2.5 rounded-2xl text-xs font-black border-2 transition-all cursor-pointer ${
                     entryFee === val
-                      ? 'bg-emerald-500 text-zinc-950 border-emerald-400 font-black'
-                      : 'bg-zinc-800/80 border-zinc-700 text-zinc-300 hover:bg-zinc-700'
+                      ? 'btn-game-green text-zinc-950 border-emerald-400 shadow-md'
+                      : 'bg-[#080d1a] border-zinc-800 text-zinc-300 hover:bg-zinc-800'
                   }`}
                 >
-                  {val} ETB
+                  {val} ብር
                 </button>
               ))}
             </div>
@@ -165,33 +182,45 @@ export const CreateGameModal: React.FC<CreateGameModalProps> = ({
               value={entryFee}
               onChange={(e) => setEntryFee(Number(e.target.value))}
               required
-              className="w-full px-4 py-3 rounded-2xl bg-zinc-950 border border-zinc-800 font-mono text-sm text-white focus:outline-none focus:border-emerald-500"
+              className="w-full px-4 py-2.5 rounded-2xl bg-[#080d1a] border border-zinc-800 font-mono text-sm text-white focus:outline-none focus:border-emerald-500 font-black"
             />
           </div>
 
-          {/* Bento Pot Projection */}
-          <div className="p-4 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-1 text-xs">
-            <div className="flex justify-between text-zinc-400">
-              <span>Total Pot ({maxPlayers} × {entryFee} ETB)</span>
-              <span className="font-mono text-white font-bold">{totalPot} ETB</span>
+          {/* Dynamic Join & Pot Information Banner */}
+          <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 space-y-1.5 text-xs text-zinc-300">
+            <div className="flex items-center gap-2 font-black text-emerald-400 uppercase tracking-wider">
+              <Users className="w-4 h-4" />
+              <span>{language === 'am' ? 'ተጫዋቾች በራሳቸው ቁጥራቸው ይጨምራል' : 'Dynamic Auto-Scaling Pot'}</span>
             </div>
-            <div className="flex justify-between text-zinc-500 text-[11px]">
-              <span>Platform Fee (5%)</span>
-              <span className="font-mono">-{platformFee} ETB</span>
-            </div>
-            <div className="flex justify-between text-emerald-400 font-bold pt-1.5 border-t border-zinc-800">
-              <span className="uppercase tracking-wider text-[10px]">Projected Winner Payout</span>
-              <span className="font-mono text-sm font-black">{estimatedPayout} ETB</span>
-            </div>
+            <p className="text-[11px] text-zinc-400 leading-relaxed font-medium">
+              {language === 'am'
+                ? 'ሌሎች ተጫዋቾች በተቀላቀሉ ቁጥር የተጫዋቾች ብዛት እና የሽልማት መጠኑ በራስ-ሰር ይጨምራል! 2 ወይም ከዚያ በላይ ተጫዋቾች ሲገቡ ጨዋታውን መጀመር ይችላሉ።'
+                : 'Player count and prize pot will increase automatically as players join. You can start the match as soon as 2 or more players join!'}
+            </p>
           </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-4 rounded-2xl bg-emerald-500 hover:bg-emerald-400 active:scale-[0.99] font-black text-xs uppercase tracking-wider text-zinc-950 shadow-lg shadow-emerald-950 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-          >
-            <span>{loading ? 'CREATING MATCH...' : `CREATE & JOIN (${entryFee} ETB)`}</span>
-          </button>
+          {/* Action Buttons: Cancel / Back + Submit */}
+          <div className="grid grid-cols-2 gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => {
+                soundFx.playButtonClick();
+                onClose();
+              }}
+              className="w-full py-3.5 rounded-2xl bg-zinc-800 hover:bg-zinc-700 font-black text-xs uppercase tracking-wider text-zinc-300 border border-zinc-700 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <ArrowLeft className="w-4 h-4 text-zinc-400" />
+              <span>{language === 'am' ? 'ተመለስ' : 'Cancel'}</span>
+            </button>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-3.5 rounded-2xl btn-game-green font-black text-xs uppercase tracking-wider text-zinc-950 shadow-xl flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+            >
+              <span>{loading ? '...' : `✓ ${language === 'am' ? 'ክፈት' : 'OPEN'} (${entryFee} ETB)`}</span>
+            </button>
+          </div>
         </form>
       </div>
     </div>

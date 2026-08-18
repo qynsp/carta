@@ -1,11 +1,27 @@
-import React, { useEffect, useState } from 'react';
-import { motion } from 'motion/react';
-import { Trophy, Users, Clock, AlertCircle, ArrowLeft, RefreshCw, Play, Shield } from 'lucide-react';
+import React, { useEffect, useState, useRef } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import {
+  Trophy,
+  Users,
+  Clock,
+  AlertCircle,
+  ArrowLeft,
+  RefreshCw,
+  Play,
+  Volume2,
+  Sparkles,
+  UserPlus,
+  Zap,
+  Flame,
+  CheckCircle2,
+} from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
+import { useLanguage } from '../context/LanguageContext';
 import { GamePublicState, GamePrivateState } from '../types';
 import { CardHand } from './CardHand';
 import { PoolBall } from './PoolBall';
+import { soundFx } from '../utils/audio';
 
 interface PublicGameViewProps {
   gameId: string;
@@ -20,11 +36,17 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
 }) => {
   const { user, token } = useAuth();
   const { subscribeToGame, unsubscribeFromGame, activeGame, privateState } = useSocket();
+  const { t, language } = useLanguage();
+
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [localGame, setLocalGame] = useState<GamePublicState | null>(null);
   const [localPrivate, setLocalPrivate] = useState<GamePrivateState | null>(null);
   const [joining, setJoining] = useState<boolean>(false);
+  const [starting, setStarting] = useState<boolean>(false);
+
+  const prevTurnUserRef = useRef<string | null>(null);
+  const prevSunkLengthRef = useRef<number>(0);
 
   // Subscribe to real-time updates for this game
   useEffect(() => {
@@ -36,13 +58,30 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
     };
   }, [gameId]);
 
-  // Sync with WebSocket stream
+  // Sync with WebSocket stream & play sound effects
   useEffect(() => {
     if (activeGame && activeGame.id === gameId) {
       setLocalGame(activeGame);
       setLoading(false);
+
+      // Play ball pocket sound when a ball is sunk
+      if (activeGame.sunkBalls.length > prevSunkLengthRef.current) {
+        soundFx.playBallPocket();
+      }
+      prevSunkLengthRef.current = activeGame.sunkBalls.length;
+
+      // Play chime when turn shifts to user
+      if (
+        user &&
+        activeGame.currentTurnUserId === user.id &&
+        prevTurnUserRef.current !== user.id &&
+        activeGame.status === 'ACTIVE'
+      ) {
+        soundFx.playYourTurn();
+      }
+      prevTurnUserRef.current = activeGame.currentTurnUserId;
     }
-  }, [activeGame, gameId]);
+  }, [activeGame, gameId, user]);
 
   useEffect(() => {
     if (privateState && privateState.game.id === gameId) {
@@ -60,6 +99,11 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
       if (!res.ok) throw new Error('Failed to load game');
       const data = await res.json();
       setLocalGame(data.game);
+
+      if (data.game) {
+        prevSunkLengthRef.current = data.game.sunkBalls?.length || 0;
+        prevTurnUserRef.current = data.game.currentTurnUserId;
+      }
 
       // If authenticated, fetch private state
       if (token) {
@@ -80,6 +124,7 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
 
   const handleJoinGame = async () => {
     if (!token) return;
+    soundFx.playButtonClick();
     setJoining(true);
     setError(null);
     try {
@@ -93,11 +138,37 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to join game');
 
+      soundFx.playCoinWin();
       await fetchGameData();
     } catch (err: any) {
       setError(err.message || 'Error joining match');
     } finally {
       setJoining(false);
+    }
+  };
+
+  const handleStartGame = async () => {
+    if (!token) return;
+    soundFx.playButtonClick();
+    setStarting(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/games/${gameId}/start`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to start game');
+
+      soundFx.playYourTurn();
+      await fetchGameData();
+    } catch (err: any) {
+      setError(err.message || 'Error starting match');
+    } finally {
+      setStarting(false);
     }
   };
 
@@ -111,22 +182,24 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
   if (loading && !game) {
     return (
       <div className="flex flex-col items-center justify-center py-20 space-y-3">
-        <RefreshCw className="w-8 h-8 text-emerald-400 animate-spin" />
-        <span className="text-sm text-zinc-400">Connecting to pool table...</span>
+        <div className="text-4xl animate-bounce">🎱</div>
+        <span className="text-sm font-bold text-emerald-400">
+          {language === 'am' ? 'ጠረጴዛው በመገናኘት ላይ...' : 'Connecting to pool arena...'}
+        </span>
       </div>
     );
   }
 
   if (error && !game) {
     return (
-      <div className="p-6 rounded-3xl bg-rose-950/40 border border-rose-800 text-center space-y-4 max-w-md mx-auto">
+      <div className="p-6 rounded-3xl bg-rose-950/40 border-2 border-rose-800 text-center space-y-4 max-w-md mx-auto shadow-2xl">
         <AlertCircle className="w-10 h-10 text-rose-400 mx-auto" />
-        <div className="text-rose-200 font-semibold">{error}</div>
+        <div className="text-rose-200 font-bold">{error}</div>
         <button
           onClick={onBack}
-          className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 rounded-2xl text-xs font-bold text-white transition-all cursor-pointer"
+          className="px-6 py-3 bg-zinc-800 hover:bg-zinc-700 rounded-2xl text-xs font-black uppercase text-white transition-all cursor-pointer shadow-md"
         >
-          Return to Games
+          {t('backToLobby')}
         </button>
       </div>
     );
@@ -135,92 +208,146 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
   if (!game) return null;
 
   return (
-    <div className="space-y-4">
-      {/* Top Bento Nav Row */}
+    <div className="space-y-4 animate-fadeIn">
+      {/* Top Nav Row */}
       <div className="flex items-center justify-between">
         <button
-          onClick={onBack}
-          className="bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-300 px-4 py-2 rounded-2xl transition-colors flex items-center gap-2 text-xs font-bold cursor-pointer"
+          onClick={() => {
+            soundFx.playButtonClick();
+            onBack();
+          }}
+          className="bg-zinc-900 border-2 border-zinc-700 hover:border-emerald-500 text-zinc-200 px-4 py-2.5 rounded-2xl transition-all flex items-center gap-2 text-xs font-black uppercase tracking-wider cursor-pointer shadow-md"
         >
           <ArrowLeft className="w-4 h-4 text-emerald-400" />
-          <span>MATCH LOBBY</span>
+          <span>{t('backToLobby')}</span>
         </button>
 
         <div className="flex items-center gap-2">
           {isOperatorOrAdmin && onOpenOperator && (
             <button
-              onClick={onOpenOperator}
-              className="px-4 py-2 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 text-xs font-black shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
+              onClick={() => {
+                soundFx.playButtonClick();
+                onOpenOperator();
+              }}
+              className="px-4 py-2.5 rounded-2xl btn-game-green text-zinc-950 text-xs font-black shadow-lg transition-all flex items-center gap-1.5 cursor-pointer uppercase tracking-wider"
             >
               <Play className="w-3.5 h-3.5 fill-current" />
-              <span>OPERATOR KEYPAD</span>
+              <span>{t('operator')}</span>
             </button>
           )}
-          <span className="px-3.5 py-1.5 rounded-2xl text-xs font-bold bg-zinc-900 border border-zinc-800 text-zinc-300">
-            {game.tableNumber || 'Table 1'}
+          <span className="px-3.5 py-2 rounded-2xl text-xs font-black bg-[#0f172a] border-2 border-emerald-500/40 text-emerald-400 shadow-md">
+            🎱 {game.tableNumber || 'Table 1'}
           </span>
         </div>
       </div>
 
+      {/* GIANT ARCADE TURN CALLOUT BANNER */}
+      {game.status === 'ACTIVE' && (
+        <div
+          className={`p-4 sm:p-6 rounded-3xl border-2 text-center transition-all shadow-2xl relative overflow-hidden ${
+            isMyTurn
+              ? 'bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 text-zinc-950 border-emerald-300 shadow-emerald-500/40 animate-glow-pulse'
+              : 'bg-gradient-to-br from-[#111a2e] to-[#0a1120] border-zinc-700 text-zinc-300'
+          }`}
+        >
+          {isMyTurn ? (
+            <div className="space-y-1.5 relative z-10">
+              <div className="text-3xl sm:text-4xl font-black uppercase tracking-tight flex items-center justify-center gap-2">
+                <Zap className="w-8 h-8 fill-zinc-950 animate-bounce" />
+                <span>{t('yourTurn')}</span>
+              </div>
+              <p className="text-xs sm:text-sm font-black uppercase tracking-wide">
+                {language === 'am'
+                  ? '🎯 ካርድህ ላይ ያለውን ኳስ ጠረጴዛው ላይ ምታና አስገባ!'
+                  : '🎯 Hit your secret card ball into any physical pocket now!'}
+              </p>
+            </div>
+          ) : (
+            <div className="flex items-center justify-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center text-xl animate-spin">
+                ⏳
+              </div>
+              <div className="text-left">
+                <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400 block">
+                  {language === 'am' ? 'የአሁኑ ተራ' : 'CURRENT SHOOTER'}
+                </span>
+                <span className="text-lg sm:text-xl font-black text-amber-400 font-sans">
+                  {game.currentTurnUsername || 'Player'} {t('otherTurn')}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Main Bento Grid Container */}
       <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-        {/* Bento Section 1: Current Turn & Roster (col-span-5) */}
-        <section className="md:col-span-5 bg-zinc-900/60 border border-zinc-800 rounded-3xl p-6 flex flex-col justify-between space-y-6 shadow-xl">
+        {/* Bento Section 1: Roster & Details (col-span-5) */}
+        <section className="md:col-span-5 bg-gradient-to-b from-[#111a2e] to-[#0a1120] border-2 border-zinc-800 rounded-3xl p-5 sm:p-6 flex flex-col justify-between space-y-5 shadow-2xl">
           <div>
             <div className="flex justify-between items-start mb-4">
               <div>
-                <p className="text-zinc-400 text-xs uppercase tracking-widest mb-1">Current Turn</p>
-                <h2 className="text-2xl sm:text-3xl font-black text-emerald-400 uppercase tracking-tight">
-                  {game.currentTurnUsername || (game.status === 'WAITING' ? 'Waiting Lobby' : 'Completed')}
+                <p className="text-zinc-400 text-xs font-black uppercase tracking-widest mb-0.5">{t('table')}</p>
+                <h2 className="text-xl sm:text-2xl font-black text-white uppercase tracking-tight">
+                  {game.name}
                 </h2>
               </div>
               <div
-                className={`px-3 py-1 rounded-full text-xs font-black uppercase ${
+                className={`px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider ${
                   game.status === 'ACTIVE'
-                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 animate-pulse'
                     : game.status === 'COMPLETED'
-                    ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30'
-                    : 'bg-blue-500/10 text-blue-400 border border-blue-500/30'
+                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+                    : 'bg-blue-500/20 text-blue-400 border border-blue-500/40'
                 }`}
               >
                 {game.status}
               </div>
             </div>
 
-            {/* Players List in Bento Card */}
+            {/* Players List with Dynamic Count */}
             <div className="space-y-2.5">
-              <p className="text-zinc-500 text-[10px] uppercase tracking-widest font-bold">
-                Table Lineup ({game.players.length}/{game.maxPlayers})
-              </p>
-              {game.players.map((p, idx) => {
+              <div className="flex justify-between items-center text-xs font-black text-zinc-400">
+                <span className="uppercase tracking-widest">{t('players')}</span>
+                <span className="text-emerald-400 font-mono">
+                  {game.players.length} {language === 'am' ? 'ተጫዋቾች ገብተዋል' : 'PLAYERS JOINED'}
+                </span>
+              </div>
+
+              {game.players.map((p) => {
                 const isTurn = game.currentTurnUserId === p.userId && game.status === 'ACTIVE';
                 const isMe = p.userId === user?.id;
 
                 return (
                   <div
                     key={p.userId}
-                    className={`flex items-center gap-3 p-3 rounded-2xl transition-all ${
+                    className={`flex items-center gap-3 p-3.5 rounded-2xl transition-all ${
                       isTurn
-                        ? 'bg-emerald-500/10 border border-emerald-500/30'
-                        : 'bg-zinc-800/40 border border-zinc-700/40'
+                        ? 'bg-emerald-500/20 border-2 border-emerald-400 text-white shadow-lg'
+                        : 'bg-[#080d1a] border border-zinc-800 text-zinc-300'
                     }`}
                   >
                     <div
-                      className={`h-3 w-3 rounded-full shrink-0 ${
-                        isTurn ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-600'
+                      className={`h-4 w-4 rounded-full shrink-0 flex items-center justify-center text-[9px] font-black ${
+                        isTurn ? 'bg-emerald-400 text-zinc-950 animate-ping' : 'bg-zinc-700 text-zinc-300'
                       }`}
-                    />
+                    >
+                      🎱
+                    </div>
                     <div className="flex-1 truncate">
-                      <span className={`font-bold text-sm ${isTurn ? 'text-white' : 'text-zinc-300'}`}>
-                        {p.firstName || p.username} {isMe ? '(You)' : ''}
+                      <span className={`font-black text-sm ${isTurn ? 'text-emerald-300' : 'text-zinc-200'}`}>
+                        {p.firstName || p.username} {isMe ? (language === 'am' ? '(እርስዎ)' : '(You)') : ''}
                       </span>
                     </div>
                     {p.isWinner && (
-                      <span className="text-xs font-black text-amber-400">🏆 WINNER</span>
+                      <span className="text-xs font-black text-amber-400 flex items-center gap-1">
+                        <Trophy className="w-3.5 h-3.5" />
+                        <span>{t('winnerWas')}</span>
+                      </span>
                     )}
                     {isTurn && (
-                      <span className="text-[10px] font-black text-emerald-400 uppercase tracking-wider">
-                        Shooting
+                      <span className="text-[10px] font-black text-emerald-300 uppercase tracking-wider px-2.5 py-1 bg-emerald-950/90 rounded-xl border border-emerald-500/50">
+                        {language === 'am' ? 'እየመታ ነው 🎯' : 'SHOOTING 🎯'}
                       </span>
                     )}
                   </div>
@@ -228,35 +355,70 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
               })}
             </div>
 
-            {/* Join Button for Waiting Match */}
-            {game.status === 'WAITING' && !isPlayerInGame && (
-              <div className="pt-4">
-                <button
-                  onClick={handleJoinGame}
-                  disabled={joining}
-                  className="w-full py-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-black text-xs tracking-wider uppercase shadow-lg shadow-emerald-950 transition-all flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <span>JOIN MATCH ({game.entryFee} ETB)</span>
-                </button>
+            {/* Action Buttons for Waiting Lobby */}
+            {game.status === 'WAITING' && (
+              <div className="pt-4 space-y-3">
+                {/* If user is NOT in game, allow them to join */}
+                {!isPlayerInGame && (
+                  <button
+                    onClick={handleJoinGame}
+                    disabled={joining}
+                    className="w-full py-4 rounded-2xl btn-game-green text-zinc-950 font-black text-sm tracking-wider uppercase shadow-xl flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    <UserPlus className="w-5 h-5 stroke-[2.5]" />
+                    <span>
+                      {language === 'am'
+                        ? `በ ${game.entryFee} ብር ተቀላቀል`
+                        : `JOIN TABLE (${game.entryFee} ETB)`}
+                    </span>
+                  </button>
+                )}
+
+                {/* If 2 or more players have joined, any joined player / host / operator can start the match! */}
+                {game.players.length >= 2 && (isPlayerInGame || isOperatorOrAdmin) && (
+                  <button
+                    onClick={handleStartGame}
+                    disabled={starting}
+                    className="w-full py-4 rounded-2xl btn-game-gold text-zinc-950 font-black text-sm tracking-wider uppercase shadow-xl flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 animate-pulse"
+                  >
+                    <Play className="w-5 h-5 fill-current" />
+                    <span>
+                      {starting
+                        ? '...'
+                        : language === 'am'
+                        ? `⚡ ጨዋታውን ጀምር (${game.players.length} ተጫዋቾች)`
+                        : `⚡ START MATCH NOW (${game.players.length} PLAYERS)`}
+                    </span>
+                  </button>
+                )}
+
+                {game.players.length < 2 && (
+                  <div className="p-3 bg-[#080d1a] border border-zinc-800 rounded-2xl text-center text-xs text-zinc-400 font-bold">
+                    {t('minPlayersNotice')}
+                  </div>
+                )}
               </div>
             )}
           </div>
 
-          {/* Bottom Card Footer: Game ID & Prize Pool */}
+          {/* Prize Pool Info */}
           <div className="pt-4 border-t border-zinc-800 flex justify-between items-end">
             <div>
-              <p className="text-zinc-500 text-[10px] uppercase tracking-widest">Match ID</p>
-              <p className="font-mono text-xs text-zinc-300 font-bold">#{game.id.slice(0, 8)}</p>
+              <p className="text-zinc-500 text-[10px] uppercase font-black tracking-widest">{t('entryFee')}</p>
+              <p className="font-mono text-sm text-zinc-300 font-bold">{game.entryFee} ETB</p>
             </div>
             <div className="text-right">
-              <p className="text-zinc-500 text-[10px] uppercase tracking-widest">Prize Pool</p>
-              <p className="text-xl font-mono font-black text-white">{game.winnerPayout} ETB</p>
+              <p className="text-zinc-400 text-xs uppercase tracking-widest font-black">{t('prizePot')}</p>
+              <p className="text-2xl font-mono font-black text-amber-400 flex items-center justify-end gap-1">
+                <span>🪙</span>
+                <span>{game.winnerPayout} ETB</span>
+              </p>
             </div>
           </div>
         </section>
 
-        {/* Bento Section 2: My Private Cards Tray (col-span-7) */}
-        <section className="md:col-span-7 bg-zinc-900 border border-zinc-800 rounded-3xl p-6 flex flex-col justify-between space-y-4 shadow-xl">
+        {/* Bento Section 2: Player's Private Cards Tray (col-span-7) */}
+        <section className="md:col-span-7 bg-gradient-to-b from-[#111a2e] to-[#0a1120] border-2 border-zinc-800 rounded-3xl p-5 sm:p-6 flex flex-col justify-between space-y-4 shadow-2xl">
           {isPlayerInGame && game.status === 'ACTIVE' ? (
             <CardHand
               cards={myCards}
@@ -265,46 +427,114 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
               isWinner={isWinner}
             />
           ) : game.status === 'COMPLETED' ? (
-            <div className="p-8 text-center space-y-3 my-auto">
-              <div className="text-5xl animate-bounce">🏆</div>
-              <h3 className="text-xl font-black text-amber-400 uppercase">Match Concluded</h3>
-              <p className="text-zinc-400 text-xs max-w-sm mx-auto">
-                {game.winnerName} won this pool match and collected the {game.winnerPayout} ETB pot!
+            <div className="p-8 text-center space-y-4 my-auto">
+              <motion.div
+                animate={{ rotate: [-5, 5, -5], scale: [1, 1.1, 1] }}
+                transition={{ repeat: Infinity, duration: 2 }}
+                className="text-7xl"
+              >
+                🏆
+              </motion.div>
+              <div className="space-y-1">
+                <span className="px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs font-black uppercase tracking-wider">
+                  MATCH CONCLUDED
+                </span>
+                <h3 className="text-2xl font-black text-amber-400 uppercase">{t('matchEnded')}</h3>
+              </div>
+              <p className="text-zinc-200 text-sm max-w-sm mx-auto font-medium">
+                <strong className="text-emerald-400">{game.winnerName}</strong>{' '}
+                {language === 'am'
+                  ? `ጨዋታውን አሸንፎ ${game.winnerPayout} ብር ወስዷል!`
+                  : `won this pool match and collected the ${game.winnerPayout} ETB pot!`}
               </p>
             </div>
           ) : (
             <div className="p-8 text-center space-y-3 my-auto">
-              <div className="text-4xl">🎱</div>
-              <h3 className="text-base font-bold text-white">Match In Preparation</h3>
-              <p className="text-zinc-500 text-xs max-w-sm mx-auto">
+              <div className="text-6xl animate-pulse">🎱</div>
+              <h3 className="text-lg font-black text-white uppercase tracking-tight">
+                {language === 'am' ? 'ጨዋታው በዝግጅት ላይ' : 'Match Arena Waiting'}
+              </h3>
+              <p className="text-zinc-400 text-xs max-w-sm mx-auto leading-relaxed font-medium">
                 {game.status === 'WAITING'
-                  ? `Waiting for players to join (${game.players.length}/${game.maxPlayers}). Cards will be dealt once the table fills.`
+                  ? (language === 'am'
+                      ? `ተጫዋቾች እየተቀላቀሉ ነው (${game.players.length} ተጫዋቾች ገብተዋል)። 2 ወይም ከዚያ በላይ ሲሆኑ ጨዋታው ይጀመራል!`
+                      : `Players are joining (${game.players.length} joined). You can start anytime with 2 or more players!`)
                   : 'Cards are active on the physical table.'}
               </p>
             </div>
           )}
 
-          <div className="pt-3 border-t border-zinc-800 flex justify-between items-center text-[11px] text-zinc-500">
-            <span>Entry: {game.entryFee} ETB</span>
-            <span>Fee: {game.platformFeePercent}%</span>
-            <span>Pot: {game.totalPot} ETB</span>
+          <div className="pt-3 border-t border-zinc-800 flex justify-between items-center text-xs text-zinc-400 font-bold">
+            <span>{t('entryFee')}: {game.entryFee} ETB</span>
+            <span className="text-amber-400 font-black">{t('prizePot')}: {game.winnerPayout} ETB 🪙</span>
           </div>
         </section>
 
-        {/* Bento Section 3: Live Event Log (col-span-6) */}
-        <section className="md:col-span-6 bg-zinc-900/50 border border-zinc-800 rounded-3xl p-6 overflow-hidden">
-          <div className="flex items-center gap-2 mb-4">
-            <span className="text-emerald-500 font-bold">●</span>
-            <p className="text-zinc-400 text-xs uppercase tracking-widest font-semibold">Live Event Feed</p>
+        {/* Bento Section 3: Balls On Table (col-span-6) */}
+        <section className="md:col-span-6 bg-[#0f172a] border-2 border-zinc-800 rounded-3xl p-5 sm:p-6 flex flex-col justify-between shadow-xl">
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">🎱</span>
+                <p className="text-white text-xs uppercase tracking-widest font-black">
+                  {t('ballsOnTable')} (1–15)
+                </p>
+              </div>
+              <span className="text-[11px] text-zinc-400 font-bold">
+                {language === 'am' ? '14 እና 15 ገለልተኛ ናቸው' : '14 & 15 neutral'}
+              </span>
+            </div>
+
+            {/* Balls Display Grid with 3D Spheres */}
+            <div className="flex flex-wrap gap-2.5 py-1">
+              {Array.from({ length: 15 }, (_, i) => i + 1).map((ballNum) => {
+                const isSunk = game.sunkBalls.includes(ballNum);
+                return (
+                  <div
+                    key={ballNum}
+                    className={`transition-all duration-300 ${
+                      isSunk ? 'opacity-20 grayscale scale-90 pointer-events-none' : 'opacity-100 scale-100 hover:scale-110'
+                    }`}
+                  >
+                    <PoolBall number={ballNum} size="md" />
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
-          <div className="space-y-3">
+          <div className="mt-4 pt-3 border-t border-zinc-800 flex justify-between items-center text-xs font-bold">
+            <span className="text-zinc-400">
+              {language === 'am' ? 'የገቡ ኳሶች' : 'Balls Pocketed'}: {game.sunkBalls.length}/15
+            </span>
+            {isOperatorOrAdmin && onOpenOperator && (
+              <button
+                onClick={() => {
+                  soundFx.playButtonClick();
+                  onOpenOperator();
+                }}
+                className="text-emerald-400 hover:text-emerald-300 font-black text-xs cursor-pointer flex items-center gap-1 uppercase tracking-wider"
+              >
+                <span>{t('operator')} →</span>
+              </button>
+            )}
+          </div>
+        </section>
+
+        {/* Bento Section 4: Live Event Feed (col-span-6) */}
+        <section className="md:col-span-6 bg-[#0f172a] border-2 border-zinc-800 rounded-3xl p-5 sm:p-6 shadow-xl">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+            <p className="text-white text-xs uppercase tracking-widest font-black">{t('liveFeed')}</p>
+          </div>
+
+          <div>
             {game.lastEvent ? (
-              <div className="flex items-center gap-3 p-3 bg-zinc-950/60 border border-zinc-800 rounded-2xl">
-                <div className="text-xl">🎱</div>
+              <div className="flex items-center gap-3 p-3.5 bg-[#080d1a] border border-zinc-800 rounded-2xl shadow-inner">
+                <div className="text-2xl animate-bounce">🎱</div>
                 <div className="flex-1">
-                  <p className="text-xs font-bold text-white">{game.lastEvent.message}</p>
-                  <p className="text-[10px] text-zinc-500">
+                  <p className="text-xs sm:text-sm font-black text-white">{game.lastEvent.message}</p>
+                  <p className="text-[10px] text-zinc-500 font-mono">
                     {new Date(game.lastEvent.createdAt).toLocaleTimeString()}
                   </p>
                 </div>
@@ -313,46 +543,11 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
                 )}
               </div>
             ) : (
-              <p className="text-xs text-zinc-500 italic">No events recorded yet on this table.</p>
-            )}
-          </div>
-        </section>
-
-        {/* Bento Section 4: Table Balls Status (col-span-6) */}
-        <section className="md:col-span-6 bg-zinc-900 border border-zinc-800 rounded-3xl p-6 flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between mb-4">
-              <p className="text-zinc-400 text-xs uppercase tracking-widest font-semibold">
-                Table Balls (1–15)
+              <p className="text-xs text-zinc-500 italic py-4 font-medium">
+                {language === 'am'
+                  ? 'እስካሁን ምንም ኳስ አልተመታም'
+                  : 'No shots recorded yet on this table.'}
               </p>
-              <span className="text-[10px] text-zinc-500">14 & 15 are neutral</span>
-            </div>
-
-            {/* Balls Display Grid */}
-            <div className="flex flex-wrap gap-2">
-              {Array.from({ length: 15 }, (_, i) => i + 1).map((ballNum) => {
-                const isSunk = game.sunkBalls.includes(ballNum);
-                return (
-                  <div
-                    key={ballNum}
-                    className={`transition-opacity ${isSunk ? 'opacity-25 grayscale' : 'opacity-100'}`}
-                  >
-                    <PoolBall number={ballNum} size="sm" />
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="mt-4 pt-3 border-t border-zinc-800 flex justify-between items-center text-xs">
-            <span className="text-zinc-500">Balls Pocketed: {game.sunkBalls.length}/15</span>
-            {isOperatorOrAdmin && onOpenOperator && (
-              <button
-                onClick={onOpenOperator}
-                className="text-emerald-400 hover:underline font-bold text-xs cursor-pointer"
-              >
-                Open Table Keypad →
-              </button>
             )}
           </div>
         </section>

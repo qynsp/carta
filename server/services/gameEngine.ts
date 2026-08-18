@@ -21,19 +21,16 @@ export class GameEngineService {
   }
 
   /**
-   * Create a new Game
+   * Create a new Game (Host creates open table, players join dynamically)
    */
   static async createGame(
     creatorId: string,
     creatorName: string,
     name: string,
-    maxPlayers: number,
-    entryFee: number,
+    maxPlayers = 8,
+    entryFee = 50,
     tableNumber?: string
   ): Promise<string> {
-    if (maxPlayers < 2 || maxPlayers > 8) {
-      throw new Error('Players must be between 2 and 8');
-    }
     if (entryFee < 0) {
       throw new Error('Entry fee cannot be negative');
     }
@@ -50,7 +47,8 @@ export class GameEngineService {
     }
 
     const gameId = `game-${crypto.randomUUID()}`;
-    const totalPot = entryFee * maxPlayers;
+    // Initial pot starts with 1 player (the host) and increases as more players join
+    const totalPot = entryFee * 1;
     const feeAmount = (totalPot * feePercent) / 100;
     const winnerPayout = totalPot - feeAmount;
 
@@ -84,7 +82,7 @@ export class GameEngineService {
         await client.query(
           `INSERT INTO game_events (game_id, type, user_id, message, created_at)
            VALUES ($1, 'GAME_CREATED', $2, $3, NOW())`,
-          [gameId, creatorId, `${creatorName} created the game "${name}" (${entryFee} ETB entry)`]
+          [gameId, creatorId, `${creatorName} created the open table "${name}" (${entryFee} ETB entry)`]
         );
 
         await client.query('COMMIT');
@@ -126,7 +124,7 @@ export class GameEngineService {
         gameId,
         type: 'GAME_CREATED',
         userId: creatorId,
-        message: `${creatorName} created the game "${name}" (${entryFee} ETB entry)`,
+        message: `${creatorName} created the open table "${name}" (${entryFee} ETB entry)`,
         createdAt: now,
       });
     }
@@ -136,7 +134,7 @@ export class GameEngineService {
   }
 
   /**
-   * Join an open Game
+   * Join an open Game (Dynamically increases player count and pot)
    */
   static async joinGame(userId: string, username: string, gameId: string): Promise<boolean> {
     const pool = getPool();
@@ -158,10 +156,11 @@ export class GameEngineService {
         }
 
         if (playersRes.rows.length >= game.max_players) {
-          throw new Error('Game is already full');
+          throw new Error('Game is already at maximum capacity (8 players)');
         }
 
         const entryFee = parseFloat(game.entry_fee);
+        const feePercent = parseFloat(game.platform_fee_percent);
 
         // Deduct entry fee
         if (entryFee > 0) {
@@ -169,48 +168,27 @@ export class GameEngineService {
         }
 
         const turnOrder = playersRes.rows.length;
+        const newPlayerCount = playersRes.rows.length + 1;
+        const newTotalPot = entryFee * newPlayerCount;
+        const newWinnerPayout = newTotalPot - (newTotalPot * feePercent) / 100;
+
         await client.query(
           `INSERT INTO game_players (game_id, user_id, turn_order, is_winner, joined_at)
            VALUES ($1, $2, $3, FALSE, NOW())`,
           [gameId, userId, turnOrder]
         );
 
+        // Update pot dynamically
+        await client.query(
+          `UPDATE games SET total_pot = $1, winner_payout = $2 WHERE id = $3`,
+          [newTotalPot, newWinnerPayout, gameId]
+        );
+
         await client.query(
           `INSERT INTO game_events (game_id, type, user_id, message, created_at)
            VALUES ($1, 'PLAYER_JOINED', $2, $3, NOW())`,
-          [gameId, userId, `${username} joined the game`]
+          [gameId, userId, `${username} joined the game (Pot is now ${newWinnerPayout.toFixed(0)} ETB)`]
         );
-
-        // Check if game is now full to start
-        const allPlayers = [...playersRes.rows, { user_id: userId, turn_order: turnOrder }];
-        if (allPlayers.length >= game.max_players) {
-          // START GAME & DEAL 5 CARDS TO EACH PLAYER
-          await client.query(
-            `UPDATE games SET status = 'ACTIVE', started_at = NOW(), current_turn_user_id = $1, current_turn_index = 0 WHERE id = $2`,
-            [allPlayers[0].user_id, gameId]
-          );
-
-          for (const p of allPlayers) {
-            for (let c = 0; c < 5; c++) {
-              const cardValue = this.generateRandomCard();
-              await client.query(
-                `INSERT INTO player_cards (game_id, user_id, card_value, is_removed, is_scratch_card, added_at)
-                 VALUES ($1, $2, $3, FALSE, FALSE, NOW())`,
-                [gameId, p.user_id, cardValue]
-              );
-            }
-          }
-
-          // First turn player name lookup
-          const firstUserRes = await client.query('SELECT first_name, username FROM users WHERE id = $1', [allPlayers[0].user_id]);
-          const firstName = firstUserRes.rows[0]?.first_name || firstUserRes.rows[0]?.username || 'Player 1';
-
-          await client.query(
-            `INSERT INTO game_events (game_id, type, message, created_at)
-             VALUES ($1, 'GAME_STARTED', $2, NOW())`,
-            [gameId, `Game started! 5 cards dealt to each player. ${firstName}'s turn to shoot.`]
-          );
-        }
 
         await client.query('COMMIT');
       } catch (err) {
@@ -230,7 +208,7 @@ export class GameEngineService {
         throw new Error('You have already joined this game');
       }
       if (existingPlayers.length >= game.maxPlayers) {
-        throw new Error('Game is already full');
+        throw new Error('Game is already at maximum capacity (8 players)');
       }
 
       if (game.entryFee > 0) {
@@ -238,6 +216,13 @@ export class GameEngineService {
       }
 
       const turnOrder = existingPlayers.length;
+      const newPlayerCount = existingPlayers.length + 1;
+      const newTotalPot = game.entryFee * newPlayerCount;
+      const newWinnerPayout = newTotalPot - (newTotalPot * game.platformFeePercent) / 100;
+
+      game.totalPot = newTotalPot;
+      game.winnerPayout = newWinnerPayout;
+
       const now = new Date().toISOString();
 
       memDb.gamePlayers.push({
@@ -254,45 +239,115 @@ export class GameEngineService {
         gameId,
         type: 'PLAYER_JOINED',
         userId,
-        message: `${username} joined the game`,
+        message: `${username} joined the game (Pot is now ${newWinnerPayout.toFixed(0)} ETB)`,
         createdAt: now,
       });
+    }
 
-      // Start game if full
-      if (existingPlayers.length + 1 >= game.maxPlayers) {
-        game.status = 'ACTIVE';
-        game.startedAt = now;
-        const allPlayers = memDb.gamePlayers.filter((p) => p.gameId === gameId).sort((a, b) => a.turnOrder - b.turnOrder);
-        game.currentTurnUserId = allPlayers[0].userId;
-        game.currentTurnIndex = 0;
+    if (broadcastFn) broadcastFn(gameId, 'GAME_UPDATED');
+    return true;
+  }
 
-        // Deal 5 random cards to each player
-        for (const p of allPlayers) {
+  /**
+   * Start an open match (when 2+ players are ready at the table)
+   */
+  static async startGame(gameId: string, initiatorUserId: string): Promise<boolean> {
+    const pool = getPool();
+    const now = new Date().toISOString();
+
+    if (pool) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        const gameRes = await client.query('SELECT * FROM games WHERE id = $1 FOR UPDATE', [gameId]);
+        if (gameRes.rows.length === 0) throw new Error('Game not found');
+        const game = gameRes.rows[0];
+
+        if (game.status !== 'WAITING') throw new Error('Game is already active or finished');
+
+        const playersRes = await client.query('SELECT * FROM game_players WHERE game_id = $1 ORDER BY turn_order ASC', [gameId]);
+        const players = playersRes.rows;
+
+        if (players.length < 2) {
+          throw new Error('At least 2 players are needed to start the pool match');
+        }
+
+        // START GAME & DEAL 5 CARDS TO EACH PLAYER
+        await client.query(
+          `UPDATE games SET status = 'ACTIVE', started_at = NOW(), current_turn_user_id = $1, current_turn_index = 0 WHERE id = $2`,
+          [players[0].user_id, gameId]
+        );
+
+        for (const p of players) {
           for (let c = 0; c < 5; c++) {
-            const cardVal = this.generateRandomCard();
-            memDb.playerCards.push({
-              id: `pc-${crypto.randomUUID()}`,
-              gameId,
-              userId: p.userId,
-              cardValue: cardVal,
-              isRemoved: false,
-              isScratchCard: false,
-              addedAt: now,
-            });
+            const cardValue = this.generateRandomCard();
+            await client.query(
+              `INSERT INTO player_cards (game_id, user_id, card_value, is_removed, is_scratch_card, added_at)
+               VALUES ($1, $2, $3, FALSE, FALSE, NOW())`,
+              [gameId, p.user_id, cardValue]
+            );
           }
         }
 
-        const firstUser = memDb.users.get(allPlayers[0].userId);
-        const firstName = firstUser?.firstName || firstUser?.username || 'Player 1';
+        const firstUserRes = await client.query('SELECT first_name, username FROM users WHERE id = $1', [players[0].user_id]);
+        const firstName = firstUserRes.rows[0]?.first_name || firstUserRes.rows[0]?.username || 'Player 1';
 
-        memDb.gameEvents.push({
-          id: `ge-${crypto.randomUUID()}`,
-          gameId,
-          type: 'GAME_STARTED',
-          message: `Game started! 5 cards dealt to each player. ${firstName}'s turn to shoot.`,
-          createdAt: now,
-        });
+        await client.query(
+          `INSERT INTO game_events (game_id, type, message, created_at)
+           VALUES ($1, 'GAME_STARTED', $2, NOW())`,
+          [gameId, `Game started with ${players.length} players! 5 cards dealt to each. ${firstName}'s turn to shoot.`]
+        );
+
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
       }
+    } else {
+      // In-memory
+      const game = memDb.games.get(gameId);
+      if (!game) throw new Error('Game not found');
+      if (game.status !== 'WAITING') throw new Error('Game is already active or finished');
+
+      const players = memDb.gamePlayers.filter((p) => p.gameId === gameId).sort((a, b) => a.turnOrder - b.turnOrder);
+      if (players.length < 2) {
+        throw new Error('At least 2 players are needed to start the pool match');
+      }
+
+      game.status = 'ACTIVE';
+      game.startedAt = now;
+      game.currentTurnUserId = players[0].userId;
+      game.currentTurnIndex = 0;
+
+      // Deal 5 random cards to each player
+      for (const p of players) {
+        for (let c = 0; c < 5; c++) {
+          const cardVal = this.generateRandomCard();
+          memDb.playerCards.push({
+            id: `pc-${crypto.randomUUID()}`,
+            gameId,
+            userId: p.userId,
+            cardValue: cardVal,
+            isRemoved: false,
+            isScratchCard: false,
+            addedAt: now,
+          });
+        }
+      }
+
+      const firstUser = memDb.users.get(players[0].userId);
+      const firstName = firstUser?.firstName || firstUser?.username || 'Player 1';
+
+      memDb.gameEvents.push({
+        id: `ge-${crypto.randomUUID()}`,
+        gameId,
+        type: 'GAME_STARTED',
+        message: `Game started with ${players.length} players! 5 cards dealt to each. ${firstName}'s turn to shoot.`,
+        createdAt: now,
+      });
     }
 
     if (broadcastFn) broadcastFn(gameId, 'GAME_UPDATED');

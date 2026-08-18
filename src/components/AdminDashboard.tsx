@@ -17,8 +17,22 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { Deposit, Withdrawal, User, GamePublicState, PlatformSettings } from '../types';
 
-export const AdminDashboard: React.FC = () => {
-  const { user, token, refreshProfile } = useAuth();
+interface AdminDashboardProps {
+  adminToken?: string;
+  adminUser?: User | null;
+  onLogout?: () => void;
+}
+
+export const AdminDashboard: React.FC<AdminDashboardProps> = ({
+  adminToken,
+  adminUser,
+  onLogout,
+}) => {
+  const auth = useAuth();
+  const token = adminToken || auth.token;
+  const user = adminUser || auth.user;
+  const refreshProfile = auth.refreshProfile;
+
   const [activeTab, setActiveTab] = useState<'deposits' | 'withdrawals' | 'users' | 'games' | 'settings' | 'audit'>('deposits');
   const [metrics, setMetrics] = useState<any>(null);
   const [deposits, setDeposits] = useState<Deposit[]>([]);

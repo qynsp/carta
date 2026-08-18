@@ -72,31 +72,53 @@ apiRouter.post('/auth/telegram', async (req: Request, res: Response) => {
   }
 });
 
-// Dev / Demo User Switcher (For local development & preview testing)
-apiRouter.post('/auth/dev-switch', async (req: Request, res: Response) => {
+// Standalone Web / Guest Session (for browser players outside Telegram)
+apiRouter.post('/auth/guest', async (req: Request, res: Response) => {
   try {
-    const { userId } = req.body;
-    let targetUser = await AuthService.getUserById(userId);
+    const { username, firstName } = req.body;
+    const guestTgId = `web_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+    const user = await AuthService.syncUser(
+      guestTgId,
+      username || `player_${guestTgId.slice(-4)}`,
+      firstName || 'Player'
+    );
 
-    if (!targetUser) {
-      // Find in memDb or default list
-      const pool = getPool();
-      if (!pool) {
-        const found = memDb.users.get(userId);
-        if (found) {
-          targetUser = await AuthService.getUserById(found.id);
-        }
-      }
-    }
-
-    if (!targetUser) {
-      return res.status(404).json({ error: 'Demo user not found' });
-    }
-
-    const token = AuthService.generateToken(targetUser);
-    return res.json({ token, user: targetUser });
+    const token = AuthService.generateToken(user);
+    return res.json({ token, user });
   } catch (err: any) {
-    return res.status(500).json({ error: err.message });
+    console.error('Guest session creation error:', err);
+    return res.status(500).json({ error: err.message || 'Guest session error' });
+  }
+});
+
+// Administrator Login Endpoint
+apiRouter.post('/auth/admin/login', async (req: Request, res: Response) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password are required' });
+    }
+
+    const adminUser = await AuthService.adminLogin(username, password);
+    if (!adminUser) {
+      return res.status(401).json({ error: 'Invalid administrator credentials' });
+    }
+
+    const token = AuthService.generateToken(adminUser);
+
+    await AuditService.log(
+      adminUser.id,
+      adminUser.username,
+      'ADMIN_LOGIN',
+      'USER',
+      adminUser.id,
+      `Administrator ${adminUser.username} authenticated successfully`
+    );
+
+    return res.json({ token, user: adminUser });
+  } catch (err: any) {
+    console.error('Admin login error:', err);
+    return res.status(500).json({ error: err.message || 'Admin authentication error' });
   }
 });
 
@@ -109,24 +131,6 @@ apiRouter.get('/auth/me', requireAuth, async (req: AuthRequest, res: Response) =
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
-});
-
-// List all dev personas (for persona switcher bar in preview)
-apiRouter.get('/auth/dev-personas', async (req: Request, res: Response) => {
-  const pool = getPool();
-  if (pool) {
-    const r = await pool.query('SELECT id, telegram_id as "telegramId", username, first_name as "firstName", role FROM users ORDER BY created_at ASC LIMIT 10');
-    return res.json({ personas: r.rows });
-  }
-
-  const personas = Array.from(memDb.users.values()).map((u) => ({
-    id: u.id,
-    telegramId: u.telegramId,
-    username: u.username,
-    firstName: u.firstName,
-    role: u.role,
-  }));
-  return res.json({ personas });
 });
 
 // ==========================================
@@ -148,7 +152,7 @@ apiRouter.get('/games', async (req: Request, res: Response) => {
 apiRouter.post('/games', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const { name, maxPlayers, entryFee, tableNumber } = req.body;
-    if (!name || !maxPlayers || entryFee === undefined) {
+    if (!name || entryFee === undefined) {
       return res.status(400).json({ error: 'Missing required game fields' });
     }
 
@@ -156,13 +160,24 @@ apiRouter.post('/games', requireAuth, async (req: AuthRequest, res: Response) =>
       req.user!.userId,
       req.user!.username,
       name,
-      parseInt(maxPlayers, 10),
+      maxPlayers ? parseInt(maxPlayers, 10) : 8,
       parseFloat(entryFee),
       tableNumber
     );
 
     const game = await GameEngineService.getPublicGameState(gameId);
     return res.status(201).json({ game });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message });
+  }
+});
+
+// Start a game (when 2+ players are joined and ready)
+apiRouter.post('/games/:id/start', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    await GameEngineService.startGame(req.params.id, req.user!.userId);
+    const game = await GameEngineService.getPublicGameState(req.params.id);
+    return res.json({ success: true, game });
   } catch (err: any) {
     return res.status(400).json({ error: err.message });
   }
@@ -649,30 +664,6 @@ apiRouter.get('/admin/audit-logs', requireAuth, requireRole(['ADMIN']), async (r
   try {
     const logs = await AuditService.getLogs();
     return res.json({ logs });
-  } catch (err: any) {
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-// Dev utility: Add test demo funds for preview testing
-apiRouter.post('/dev/add-demo-funds', requireAuth, async (req: AuthRequest, res: Response) => {
-  try {
-    const { amount = 200 } = req.body;
-    const wallet = await WalletLedgerService.getWallet(req.user!.userId);
-    wallet.availableBalance += parseFloat(amount);
-
-    memDb.walletTransactions.push({
-      id: `tx-dev-${Date.now()}`,
-      userId: req.user!.userId,
-      amount: parseFloat(amount),
-      type: 'DEPOSIT',
-      status: 'COMPLETED',
-      reference: 'DEV_TEST_CREDIT',
-      description: `Dev test demo credit of ${amount} ETB`,
-      createdAt: new Date().toISOString(),
-    });
-
-    return res.json({ success: true, newBalance: wallet.availableBalance });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
