@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: pool-cards-telegram-app
+    env: node
+    plan: starter
+    region: frankfurt
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false # Connect your Neon PostgreSQL connection string (postgresql://user:pass@ep-xyz.neon.tech/neondb?sslmode=require)
+      - key: JWT_SECRET
+        generateValue: true
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_WEBAPP_URL
+        sync: false

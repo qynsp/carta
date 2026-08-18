@@ -1,0 +1,6 @@
+{
+  "name": "Telegram Pool Cards Game",
+  "description": "Production-ready Telegram Mini App pool cards game with authoritative game engine, operator controls, immutable wallet ledger, manual verification, and Neon PostgreSQL support.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
