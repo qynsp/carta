@@ -272,8 +272,19 @@ apiRouter.get('/wallet', requireAuth, async (req: AuthRequest, res: Response) =>
   }
 });
 
-// Submit manual deposit request
-apiRouter.post('/wallet/deposits', requireAuth, async (req: AuthRequest, res: Response) => {
+// Dedicated transaction history route
+apiRouter.get('/wallet/transactions', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const wallet = await WalletLedgerService.getWallet(req.user!.userId);
+    const transactions = await WalletLedgerService.getTransactions(req.user!.userId);
+    return res.json({ wallet, transactions });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Submit manual deposit request (supports both /wallet/deposit and /wallet/deposits)
+const handleDepositRequest = async (req: AuthRequest, res: Response) => {
   try {
     const { amount, reference, paymentMethod, notes } = req.body;
     if (!amount || !reference) {
@@ -293,10 +304,13 @@ apiRouter.post('/wallet/deposits', requireAuth, async (req: AuthRequest, res: Re
   } catch (err: any) {
     return res.status(400).json({ error: err.message });
   }
-});
+};
+
+apiRouter.post('/wallet/deposits', requireAuth, handleDepositRequest);
+apiRouter.post('/wallet/deposit', requireAuth, handleDepositRequest);
 
 // Get user's deposit requests
-apiRouter.get('/wallet/deposits', requireAuth, async (req: AuthRequest, res: Response) => {
+const handleGetDeposits = async (req: AuthRequest, res: Response) => {
   try {
     const pool = getPool();
     if (pool) {
@@ -311,10 +325,13 @@ apiRouter.get('/wallet/deposits', requireAuth, async (req: AuthRequest, res: Res
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
-});
+};
 
-// Submit manual withdrawal request
-apiRouter.post('/wallet/withdrawals', requireAuth, async (req: AuthRequest, res: Response) => {
+apiRouter.get('/wallet/deposits', requireAuth, handleGetDeposits);
+apiRouter.get('/wallet/deposit', requireAuth, handleGetDeposits);
+
+// Submit manual withdrawal request (supports both /wallet/withdraw and /wallet/withdrawals)
+const handleWithdrawalRequest = async (req: AuthRequest, res: Response) => {
   try {
     const { amount, telebirrPhone, accountName } = req.body;
     if (!amount || !telebirrPhone) {
@@ -333,10 +350,13 @@ apiRouter.post('/wallet/withdrawals', requireAuth, async (req: AuthRequest, res:
   } catch (err: any) {
     return res.status(400).json({ error: err.message });
   }
-});
+};
+
+apiRouter.post('/wallet/withdrawals', requireAuth, handleWithdrawalRequest);
+apiRouter.post('/wallet/withdraw', requireAuth, handleWithdrawalRequest);
 
 // Get user's withdrawal requests
-apiRouter.get('/wallet/withdrawals', requireAuth, async (req: AuthRequest, res: Response) => {
+const handleGetWithdrawals = async (req: AuthRequest, res: Response) => {
   try {
     const pool = getPool();
     if (pool) {
@@ -351,7 +371,10 @@ apiRouter.get('/wallet/withdrawals', requireAuth, async (req: AuthRequest, res: 
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
-});
+};
+
+apiRouter.get('/wallet/withdrawals', requireAuth, handleGetWithdrawals);
+apiRouter.get('/wallet/withdraw', requireAuth, handleGetWithdrawals);
 
 // ==========================================
 // 5. ADMIN DASHBOARD ROUTES

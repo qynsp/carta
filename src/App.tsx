@@ -22,7 +22,6 @@ import {
   VolumeX,
   Languages,
   Flame,
-  Gift,
   Zap,
   Star,
   Award,
@@ -38,7 +37,6 @@ import { CreateGameModal } from './components/CreateGameModal';
 import { DepositModal } from './components/DepositModal';
 import { WithdrawModal } from './components/WithdrawModal';
 import { RulesModal } from './components/RulesModal';
-import { DailyRewardModal } from './components/DailyRewardModal';
 import { soundFx } from './utils/audio';
 
 function MainAppContent({ onNavigateAdmin }: { onNavigateAdmin: () => void }) {
@@ -57,14 +55,12 @@ function MainAppContent({ onNavigateAdmin }: { onNavigateAdmin: () => void }) {
   // Player Gamification Stats
   const [playerXp, setPlayerXp] = useState<number>(360);
   const [winStreak, setWinStreak] = useState<number>(3);
-  const [claimedRewardToday, setClaimedRewardToday] = useState<boolean>(false);
 
   // Modals
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
   const [showDepositModal, setShowDepositModal] = useState<boolean>(false);
   const [showWithdrawModal, setShowWithdrawModal] = useState<boolean>(false);
   const [showRulesModal, setShowRulesModal] = useState<boolean>(false);
-  const [showDailyRewardModal, setShowDailyRewardModal] = useState<boolean>(false);
 
   const playerLevel = Math.floor(playerXp / 150) + 1;
   const currentLevelXp = playerXp % 150;
@@ -83,39 +79,12 @@ function MainAppContent({ onNavigateAdmin }: { onNavigateAdmin: () => void }) {
     setLanguage(language === 'en' ? 'am' : 'en');
   };
 
-  const handleClaimDailyReward = async (amount: number, xpGain: number) => {
-    setPlayerXp((prev) => prev + xpGain);
-    setClaimedRewardToday(true);
-    soundFx.playCoinWin();
-
-    // Credit user's wallet on server if logged in
-    if (token) {
-      try {
-        await fetch('/api/wallet/deposit', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            amount,
-            reference: `DAILY_REWARD_${Date.now().toString().slice(-6)}`,
-            paymentMethod: 'DailyBonus',
-            notes: 'Daily Lucky Box reward claim',
-          }),
-        });
-        refreshProfile();
-      } catch (e) {
-        console.error('Failed to claim daily reward:', e);
-      }
-    }
-  };
-
   const fetchGames = async () => {
     setGamesLoading(true);
     try {
       const res = await fetch('/api/games');
-      if (res.ok) {
+      const contentType = res.headers.get('content-type');
+      if (res.ok && contentType && contentType.includes('application/json')) {
         const data = await res.json();
         setGames(data.games || []);
       }
@@ -133,7 +102,8 @@ function MainAppContent({ onNavigateAdmin }: { onNavigateAdmin: () => void }) {
       const res = await fetch('/api/wallet/transactions', {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) {
+      const contentType = res.headers.get('content-type');
+      if (res.ok && contentType && contentType.includes('application/json')) {
         const data = await res.json();
         setTransactions(data.transactions || []);
       }
@@ -217,26 +187,6 @@ function MainAppContent({ onNavigateAdmin }: { onNavigateAdmin: () => void }) {
 
           {/* Right Header Widgets */}
           <div className="flex items-center gap-2">
-            {/* Daily Lucky Box Gift Button 🎁 */}
-            <motion.button
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={() => {
-                soundFx.playButtonClick();
-                setShowDailyRewardModal(true);
-              }}
-              className="relative p-2 rounded-2xl bg-gradient-to-tr from-amber-500 to-amber-400 text-zinc-950 font-black text-xs shadow-md shadow-amber-500/20 cursor-pointer flex items-center gap-1.5"
-              title="Daily Gift Box"
-            >
-              <Gift className="w-4 h-4 animate-bounce" />
-              <span className="hidden sm:inline uppercase text-[11px] font-black">
-                {language === 'am' ? 'ስጦታ' : 'FREE GIFT'}
-              </span>
-              {!claimedRewardToday && (
-                <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-rose-500 rounded-full animate-ping" />
-              )}
-            </motion.button>
-
             {/* Language Switcher */}
             <button
               onClick={toggleLanguage}
@@ -953,12 +903,6 @@ function MainAppContent({ onNavigateAdmin }: { onNavigateAdmin: () => void }) {
       <RulesModal
         isOpen={showRulesModal}
         onClose={() => setShowRulesModal(false)}
-      />
-
-      <DailyRewardModal
-        isOpen={showDailyRewardModal}
-        onClose={() => setShowDailyRewardModal(false)}
-        onClaimReward={handleClaimDailyReward}
       />
     </div>
   );

@@ -69,7 +69,8 @@ export const DepositModal: React.FC<DepositModalProps> = ({
         }),
       });
 
-      const data = await res.json();
+      const contentType = res.headers.get('content-type');
+      const data = contentType && contentType.includes('application/json') ? await res.json() : {};
       if (!res.ok) throw new Error(data.error || 'Failed to submit deposit');
 
       soundFx.playCoinWin();
