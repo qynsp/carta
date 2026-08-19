@@ -172,6 +172,8 @@ export interface PlatformSettings {
   maxDeposit?: number;
   minWithdrawal?: number;
   maxWithdrawal?: number;
+  telebirrReceiverNumber?: string;
+  telebirrReceiverName?: string;
   realMoneyMode?: boolean;
   maintenanceMode: boolean;
   minGameEntry?: number;

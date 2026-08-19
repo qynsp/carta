@@ -144,6 +144,8 @@ class MemoryDatabase {
     maxWithdrawal: 20000.0,
     minGameEntry: 10.0,
     maxGameEntry: 5000.0,
+    telebirrReceiverNumber: '0911223344',
+    telebirrReceiverName: 'Pool Cards Addis',
     realMoneyEnabled: false,
     maintenanceMode: false,
     currency: 'ETB',

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, ArrowDownRight, Copy, Check, AlertCircle, ArrowLeft, Sparkles } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -23,11 +23,29 @@ export const DepositModal: React.FC<DepositModalProps> = ({
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<boolean>(false);
+  const [telebirrNumber, setTelebirrNumber] = useState<string>('0911223344');
+  const [telebirrName, setTelebirrName] = useState<string>('Pool Cards Addis');
+
+  useEffect(() => {
+    if (isOpen) {
+      fetch('/api/settings/public')
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data?.settings?.telebirrReceiverNumber) {
+            setTelebirrNumber(data.settings.telebirrReceiverNumber);
+          }
+          if (data?.settings?.telebirrReceiverName) {
+            setTelebirrName(data.settings.telebirrReceiverName);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
-  const TELEBIRR_NUMBER = '0911223344';
-  const TELEBIRR_NAME = 'Pool Cards Addis';
+  const TELEBIRR_NUMBER = telebirrNumber;
+  const TELEBIRR_NAME = telebirrName;
 
   const copyToClipboard = (text: string) => {
     soundFx.playButtonClick();

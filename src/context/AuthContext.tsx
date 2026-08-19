@@ -7,6 +7,7 @@ interface AuthContextType {
   isLoading: boolean;
   loginWithTelegram: (initData: string) => Promise<void>;
   refreshProfile: () => Promise<void>;
+  updateProfileName: (firstName: string, username?: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -88,6 +89,26 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   };
 
+  const updateProfileName = async (firstName: string, username?: string) => {
+    const currentToken = token || localStorage.getItem('pool_jwt_token');
+    if (!currentToken) throw new Error('Not authenticated');
+
+    const res = await fetch('/api/auth/profile', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${currentToken}`,
+      },
+      body: JSON.stringify({ firstName, username }),
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to update profile name');
+    if (data.user) {
+      setUser(data.user);
+    }
+  };
+
   const logout = () => {
     setToken(null);
     setUser(null);
@@ -116,6 +137,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         isLoading,
         loginWithTelegram,
         refreshProfile,
+        updateProfileName,
         logout,
       }}
     >

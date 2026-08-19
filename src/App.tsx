@@ -26,6 +26,9 @@ import {
   Star,
   Award,
   CircleDot,
+  Edit3,
+  Check,
+  X,
 } from 'lucide-react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { SocketProvider, useSocket } from './context/SocketContext';
@@ -40,7 +43,7 @@ import { RulesModal } from './components/RulesModal';
 import { soundFx } from './utils/audio';
 
 function MainAppContent({ onNavigateAdmin }: { onNavigateAdmin: () => void }) {
-  const { user, token, refreshProfile } = useAuth();
+  const { user, token, refreshProfile, updateProfileName } = useAuth();
   const { isConnected } = useSocket();
   const { t, language, setLanguage } = useLanguage();
 
@@ -51,6 +54,13 @@ function MainAppContent({ onNavigateAdmin }: { onNavigateAdmin: () => void }) {
   const [gamesLoading, setGamesLoading] = useState<boolean>(false);
   const [txLoading, setTxLoading] = useState<boolean>(false);
   const [isMuted, setIsMuted] = useState<boolean>(soundFx.getIsMuted());
+
+  // Player Name Editing States
+  const [isEditingName, setIsEditingName] = useState<boolean>(false);
+  const [editFirstName, setEditFirstName] = useState<string>('');
+  const [editUsername, setEditUsername] = useState<string>('');
+  const [isSavingName, setIsSavingName] = useState<boolean>(false);
+  const [nameUpdateSuccess, setNameUpdateSuccess] = useState<boolean>(false);
 
   // Player Gamification Stats
   const [playerXp, setPlayerXp] = useState<number>(360);
@@ -743,25 +753,132 @@ function MainAppContent({ onNavigateAdmin }: { onNavigateAdmin: () => void }) {
             {activeTab === 'profile' && (
               <div className="max-w-2xl mx-auto space-y-4 animate-fadeIn">
                 <div className="bg-[#0f172a] border border-zinc-800 rounded-3xl p-6 space-y-6">
-                  <div className="flex items-center gap-4">
-                    <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-emerald-500 to-teal-400 text-zinc-950 flex items-center justify-center text-2xl font-black shadow-xl shadow-emerald-500/20">
-                      {initials}
-                    </div>
-                    <div>
-                      <h3 className="text-xl font-black text-white">
-                        {user?.firstName || user?.username}
-                      </h3>
-                      <div className="text-xs text-zinc-400">@{user?.username} (TG ID: {user?.telegramId})</div>
-                      <div className="flex items-center gap-2 mt-1">
-                        <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-black border border-emerald-500/30">
-                          {user?.role} ACCOUNT
-                        </span>
-                        <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-black border border-amber-500/30">
-                          LEVEL {playerLevel} • {currentTitle}
-                        </span>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="flex items-center gap-4">
+                      <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-emerald-500 to-teal-400 text-zinc-950 flex items-center justify-center text-2xl font-black shadow-xl shadow-emerald-500/20 shrink-0">
+                        {initials}
+                      </div>
+                      <div>
+                        <h3 className="text-xl font-black text-white flex items-center gap-2">
+                          <span>{user?.firstName || user?.username}</span>
+                          <span className="text-sm text-zinc-400 font-normal">(@{user?.username})</span>
+                        </h3>
+                        <div className="text-xs text-zinc-400">Telegram ID: <strong className="text-zinc-300 font-mono">{user?.telegramId || 'Guest'}</strong></div>
+                        <div className="flex items-center gap-2 mt-1.5">
+                          <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-black border border-emerald-500/30">
+                            {user?.role} ACCOUNT
+                          </span>
+                          <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-black border border-amber-500/30">
+                            LEVEL {playerLevel} • {currentTitle}
+                          </span>
+                        </div>
                       </div>
                     </div>
+
+                    {!isEditingName && (
+                      <button
+                        onClick={() => {
+                          soundFx.playButtonClick();
+                          setEditFirstName(user?.firstName || '');
+                          setEditUsername(user?.username || '');
+                          setIsEditingName(true);
+                        }}
+                        className="px-4 py-2 rounded-2xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-colors self-start sm:self-auto"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                        <span>{language === 'am' ? 'ስም ቀይር' : 'Edit Name'}</span>
+                      </button>
+                    )}
                   </div>
+
+                  {/* Name Entry / Edit Box */}
+                  {isEditingName && (
+                    <form
+                      onSubmit={async (e) => {
+                        e.preventDefault();
+                        if (!editFirstName.trim()) return;
+                        setIsSavingName(true);
+                        try {
+                          await updateProfileName(editFirstName.trim(), editUsername.trim() || undefined);
+                          setNameUpdateSuccess(true);
+                          setTimeout(() => setNameUpdateSuccess(false), 3000);
+                          setIsEditingName(false);
+                        } catch (err: any) {
+                          alert(err.message || 'Failed to update name');
+                        } finally {
+                          setIsSavingName(false);
+                        }
+                      }}
+                      className="p-4 rounded-2xl bg-zinc-950 border border-emerald-500/40 space-y-3 animate-fadeIn"
+                    >
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-xs font-black uppercase tracking-wider text-emerald-400">
+                          {language === 'am' ? 'የተጫዋች ስም ያስገቡ/ያስተካክሉ' : 'Enter & Update Player Identity'}
+                        </h4>
+                        <button
+                          type="button"
+                          onClick={() => setIsEditingName(false)}
+                          className="text-zinc-500 hover:text-white cursor-pointer"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-[11px] text-zinc-400 font-bold">
+                            {language === 'am' ? 'የተጫዋች ሙሉ ስም *' : 'Display Name (Player Name) *'}
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            value={editFirstName}
+                            onChange={(e) => setEditFirstName(e.target.value)}
+                            placeholder="e.g. Dawit Kebede"
+                            className="w-full p-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-white text-xs font-bold focus:border-emerald-500 focus:outline-none"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[11px] text-zinc-400 font-bold">
+                            {language === 'am' ? 'የተጠቃሚ መለያ (@username)' : 'User Handle (@username)'}
+                          </label>
+                          <input
+                            type="text"
+                            value={editUsername}
+                            onChange={(e) => setEditUsername(e.target.value)}
+                            placeholder="e.g. dawit_pool"
+                            className="w-full p-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-white text-xs font-mono focus:border-emerald-500 focus:outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-end gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => setIsEditingName(false)}
+                          className="px-3.5 py-1.5 rounded-xl bg-zinc-800 text-zinc-300 text-xs font-bold cursor-pointer hover:bg-zinc-700"
+                        >
+                          {language === 'am' ? 'ተው' : 'Cancel'}
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={isSavingName}
+                          className="px-4 py-1.5 rounded-xl btn-game-green text-zinc-950 text-xs font-black uppercase cursor-pointer flex items-center gap-1 shadow-md disabled:opacity-50"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          <span>{isSavingName ? (language === 'am' ? 'በመቀየር ላይ...' : 'Saving...') : (language === 'am' ? 'አስቀምጥ' : 'Save Name')}</span>
+                        </button>
+                      </div>
+                    </form>
+                  )}
+
+                  {nameUpdateSuccess && (
+                    <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-bold flex items-center gap-2">
+                      <Check className="w-4 h-4 text-emerald-400" />
+                      <span>{language === 'am' ? 'የተጫዋች ስምዎ በተሳካ ሁኔታ ተቀይሯል!' : 'Your player name has been updated successfully!'}</span>
+                    </div>
+                  )}
 
                   <div className="divide-y divide-zinc-800 text-xs pt-2">
                     <button

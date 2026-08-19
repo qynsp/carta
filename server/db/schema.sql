@@ -168,6 +168,8 @@ CREATE TABLE IF NOT EXISTS platform_settings (
     max_withdrawal NUMERIC(14, 2) NOT NULL DEFAULT 20000.00,
     min_game_entry NUMERIC(14, 2) NOT NULL DEFAULT 10.00,
     max_game_entry NUMERIC(14, 2) NOT NULL DEFAULT 5000.00,
+    telebirr_receiver_number VARCHAR(32) NOT NULL DEFAULT '0911223344',
+    telebirr_receiver_name VARCHAR(128) NOT NULL DEFAULT 'Pool Cards Addis',
     real_money_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     currency VARCHAR(10) NOT NULL DEFAULT 'ETB',
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()

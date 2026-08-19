@@ -133,6 +133,23 @@ apiRouter.get('/auth/me', requireAuth, async (req: AuthRequest, res: Response) =
   }
 });
 
+// Update current user profile name
+const handleUpdateProfile = async (req: AuthRequest, res: Response) => {
+  try {
+    const { firstName, username } = req.body;
+    if (!firstName || !firstName.trim()) {
+      return res.status(400).json({ error: 'Player name is required' });
+    }
+    const user = await AuthService.updateProfile(req.user!.userId, firstName, username);
+    return res.json({ success: true, user });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message });
+  }
+};
+
+apiRouter.put('/auth/profile', requireAuth, handleUpdateProfile);
+apiRouter.post('/auth/profile', requireAuth, handleUpdateProfile);
+
 // ==========================================
 // 2. GAME ROUTES
 // ==========================================
@@ -493,6 +510,37 @@ apiRouter.post('/admin/users/:id/freeze', requireAuth, requireRole(['ADMIN']), a
   }
 });
 
+// Admin Adjust User Balance (Credit, Debit, or Set)
+apiRouter.post('/admin/users/:id/adjust-balance', requireAuth, requireRole(['ADMIN']), async (req: AuthRequest, res: Response) => {
+  try {
+    const { actionType, amount, reason } = req.body;
+    if (!actionType || amount === undefined || isNaN(parseFloat(amount))) {
+      return res.status(400).json({ error: 'Please provide a valid actionType (CREDIT, DEBIT, or SET) and numeric amount' });
+    }
+
+    const result = await WalletLedgerService.adjustUserBalance(
+      req.params.id,
+      req.user!.userId,
+      actionType,
+      parseFloat(amount),
+      reason || 'Admin balance adjustment'
+    );
+
+    await AuditService.log(
+      req.user!.userId,
+      req.user!.username,
+      'ADJUST_BALANCE',
+      'USER',
+      req.params.id,
+      `Adjusted user #${req.params.id} balance via ${actionType} (${amount} ETB). Diff: ${result.diff} ETB. New Balance: ${result.newBalance} ETB. Reason: ${reason || 'N/A'}`
+    );
+
+    return res.json({ success: true, ...result });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message });
+  }
+});
+
 // Admin Deposits Management
 apiRouter.get('/admin/deposits', requireAuth, requireRole(['ADMIN']), async (req: AuthRequest, res: Response) => {
   try {
@@ -623,12 +671,70 @@ apiRouter.post('/admin/withdrawals/:id/reject', requireAuth, requireRole(['ADMIN
   }
 });
 
+// Public Platform Settings (for DepositModal and game limits)
+apiRouter.get('/settings/public', async (req: Request, res: Response) => {
+  try {
+    const pool = getPool();
+    if (pool) {
+      const r = await pool.query(`
+        SELECT 
+          platform_fee_percent as "platformFeePercent",
+          min_deposit as "minDeposit",
+          max_deposit as "maxDeposit",
+          min_withdrawal as "minWithdrawal",
+          max_withdrawal as "maxWithdrawal",
+          min_game_entry as "minGameEntry",
+          max_game_entry as "maxGameEntry",
+          telebirr_receiver_number as "telebirrReceiverNumber",
+          telebirr_receiver_name as "telebirrReceiverName",
+          real_money_enabled as "realMoneyEnabled",
+          currency
+        FROM platform_settings WHERE id = 1
+      `);
+      if (r.rows.length > 0) return res.json({ settings: r.rows[0] });
+    }
+    return res.json({
+      settings: {
+        platformFeePercent: memDb.platformSettings.platformFeePercent,
+        minDeposit: memDb.platformSettings.minDeposit,
+        maxDeposit: memDb.platformSettings.maxDeposit,
+        minWithdrawal: memDb.platformSettings.minWithdrawal,
+        maxWithdrawal: memDb.platformSettings.maxWithdrawal,
+        minGameEntry: memDb.platformSettings.minGameEntry,
+        maxGameEntry: memDb.platformSettings.maxGameEntry,
+        telebirrReceiverNumber: memDb.platformSettings.telebirrReceiverNumber || '0911223344',
+        telebirrReceiverName: memDb.platformSettings.telebirrReceiverName || 'Pool Cards Addis',
+        realMoneyEnabled: memDb.platformSettings.realMoneyEnabled || false,
+        currency: memDb.platformSettings.currency || 'ETB',
+      }
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // Admin Platform Settings
 apiRouter.get('/admin/settings', requireAuth, requireRole(['ADMIN']), async (req: AuthRequest, res: Response) => {
   try {
     const pool = getPool();
     if (pool) {
-      const r = await pool.query('SELECT * FROM platform_settings WHERE id = 1');
+      const r = await pool.query(`
+        SELECT 
+          id,
+          platform_fee_percent as "platformFeePercent",
+          min_deposit as "minDeposit",
+          max_deposit as "maxDeposit",
+          min_withdrawal as "minWithdrawal",
+          max_withdrawal as "maxWithdrawal",
+          min_game_entry as "minGameEntry",
+          max_game_entry as "maxGameEntry",
+          telebirr_receiver_number as "telebirrReceiverNumber",
+          telebirr_receiver_name as "telebirrReceiverName",
+          real_money_enabled as "realMoneyEnabled",
+          currency,
+          updated_at as "updatedAt"
+        FROM platform_settings WHERE id = 1
+      `);
       if (r.rows.length > 0) return res.json({ settings: r.rows[0] });
     }
     return res.json({ settings: memDb.platformSettings });
@@ -638,9 +744,23 @@ apiRouter.get('/admin/settings', requireAuth, requireRole(['ADMIN']), async (req
 });
 
 // Update Platform Settings
-apiRouter.put('/admin/settings', requireAuth, requireRole(['ADMIN']), async (req: AuthRequest, res: Response) => {
+const handleUpdateSettings = async (req: AuthRequest, res: Response) => {
   try {
-    const { platformFeePercent, minDeposit, maxDeposit, minWithdrawal, maxWithdrawal, minGameEntry, maxGameEntry, realMoneyEnabled } = req.body;
+    const {
+      platformFeePercent,
+      minDeposit,
+      maxDeposit,
+      minWithdrawal,
+      maxWithdrawal,
+      minGameEntry,
+      maxGameEntry,
+      telebirrReceiverNumber,
+      telebirrReceiverName,
+      realMoneyEnabled
+    } = req.body;
+
+    const cleanTelebirrNum = telebirrReceiverNumber ? String(telebirrReceiverNumber).trim() : '0911223344';
+    const cleanTelebirrName = telebirrReceiverName ? String(telebirrReceiverName).trim() : 'Pool Cards Addis';
 
     const pool = getPool();
     if (pool) {
@@ -648,20 +768,34 @@ apiRouter.put('/admin/settings', requireAuth, requireRole(['ADMIN']), async (req
         `UPDATE platform_settings SET 
            platform_fee_percent = $1, min_deposit = $2, max_deposit = $3,
            min_withdrawal = $4, max_withdrawal = $5, min_game_entry = $6, max_game_entry = $7,
-           real_money_enabled = $8, updated_at = NOW()
+           telebirr_receiver_number = $8, telebirr_receiver_name = $9,
+           real_money_enabled = $10, updated_at = NOW()
          WHERE id = 1`,
-        [platformFeePercent, minDeposit, maxDeposit, minWithdrawal, maxWithdrawal, minGameEntry, maxGameEntry, Boolean(realMoneyEnabled)]
+        [
+          platformFeePercent ?? 5.0,
+          minDeposit ?? 10.0,
+          maxDeposit ?? 50000.0,
+          minWithdrawal ?? 50.0,
+          maxWithdrawal ?? 20000.0,
+          minGameEntry ?? 10.0,
+          maxGameEntry ?? 5000.0,
+          cleanTelebirrNum,
+          cleanTelebirrName,
+          Boolean(realMoneyEnabled)
+        ]
       );
     } else {
       memDb.platformSettings = {
         ...memDb.platformSettings,
-        platformFeePercent: parseFloat(platformFeePercent),
-        minDeposit: parseFloat(minDeposit),
-        maxDeposit: parseFloat(maxDeposit),
-        minWithdrawal: parseFloat(minWithdrawal),
-        maxWithdrawal: parseFloat(maxWithdrawal),
-        minGameEntry: parseFloat(minGameEntry),
-        maxGameEntry: parseFloat(maxGameEntry),
+        platformFeePercent: platformFeePercent !== undefined ? parseFloat(platformFeePercent) : memDb.platformSettings.platformFeePercent,
+        minDeposit: minDeposit !== undefined ? parseFloat(minDeposit) : memDb.platformSettings.minDeposit,
+        maxDeposit: maxDeposit !== undefined ? parseFloat(maxDeposit) : memDb.platformSettings.maxDeposit,
+        minWithdrawal: minWithdrawal !== undefined ? parseFloat(minWithdrawal) : memDb.platformSettings.minWithdrawal,
+        maxWithdrawal: maxWithdrawal !== undefined ? parseFloat(maxWithdrawal) : memDb.platformSettings.maxWithdrawal,
+        minGameEntry: minGameEntry !== undefined ? parseFloat(minGameEntry) : memDb.platformSettings.minGameEntry,
+        maxGameEntry: maxGameEntry !== undefined ? parseFloat(maxGameEntry) : memDb.platformSettings.maxGameEntry,
+        telebirrReceiverNumber: cleanTelebirrNum,
+        telebirrReceiverName: cleanTelebirrName,
         realMoneyEnabled: Boolean(realMoneyEnabled),
         updatedAt: new Date().toISOString(),
       };
@@ -673,14 +807,17 @@ apiRouter.put('/admin/settings', requireAuth, requireRole(['ADMIN']), async (req
       'UPDATE_SETTINGS',
       'SETTINGS',
       '1',
-      `Updated platform fee to ${platformFeePercent}%, realMoney: ${realMoneyEnabled}`
+      `Updated settings. Telebirr: ${cleanTelebirrNum} (${cleanTelebirrName}), fee: ${platformFeePercent}%, realMoney: ${realMoneyEnabled}`
     );
 
-    return res.json({ success: true });
+    return res.json({ success: true, settings: memDb.platformSettings });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
-});
+};
+
+apiRouter.put('/admin/settings', requireAuth, requireRole(['ADMIN']), handleUpdateSettings);
+apiRouter.post('/admin/settings', requireAuth, requireRole(['ADMIN']), handleUpdateSettings);
 
 // Admin Audit Logs
 apiRouter.get('/admin/audit-logs', requireAuth, requireRole(['ADMIN']), async (req: AuthRequest, res: Response) => {

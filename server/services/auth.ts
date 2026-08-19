@@ -340,4 +340,35 @@ export class AuthService {
       wallet,
     };
   }
+
+  /**
+   * Update User Display Name and Profile
+   */
+  static async updateProfile(userId: string, firstName: string, username?: string, lastName?: string): Promise<User> {
+    const cleanFirst = firstName.trim();
+    if (!cleanFirst) throw new Error('Name cannot be empty');
+    const cleanUser = username?.trim() || cleanFirst.toLowerCase().replace(/[^a-z0-9_]/g, '_');
+
+    const pool = getPool();
+    if (pool) {
+      await pool.query(
+        `UPDATE users SET first_name = $1, username = $2, last_name = $3, updated_at = NOW() WHERE id = $4`,
+        [cleanFirst, cleanUser, lastName || null, userId]
+      );
+      const user = await this.getUserById(userId);
+      if (!user) throw new Error('User not found');
+      return user;
+    }
+
+    const u = memDb.users.get(userId);
+    if (!u) throw new Error('User not found');
+    u.firstName = cleanFirst;
+    if (username) u.username = cleanUser;
+    if (lastName !== undefined) u.lastName = lastName;
+    u.updatedAt = new Date().toISOString();
+
+    const user = await this.getUserById(userId);
+    if (!user) throw new Error('User not found');
+    return user;
+  }
 }

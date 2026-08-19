@@ -697,4 +697,121 @@ export class WalletLedgerService {
 
     return true;
   }
+
+  /**
+   * Admin Adjusts User Wallet Balance (Credit, Debit, or Set)
+   */
+  static async adjustUserBalance(
+    userId: string,
+    adminId: string,
+    actionType: 'CREDIT' | 'DEBIT' | 'SET',
+    amount: number,
+    reason: string
+  ): Promise<{ success: boolean; newBalance: number; diff: number; previousBalance: number }> {
+    if (isNaN(amount) || (actionType !== 'SET' && amount <= 0) || (actionType === 'SET' && amount < 0)) {
+      throw new Error('Invalid adjustment amount');
+    }
+
+    const pool = getPool();
+    const now = new Date().toISOString();
+
+    if (pool) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        // Check if wallet exists or initialize
+        let walletRes = await client.query('SELECT * FROM wallets WHERE user_id = $1 FOR UPDATE', [userId]);
+        if (walletRes.rows.length === 0) {
+          await client.query(
+            `INSERT INTO wallets (user_id, available_balance, locked_balance, currency, created_at)
+             VALUES ($1, 0.00, 0.00, 'ETB', NOW())
+             ON CONFLICT (user_id) DO NOTHING`,
+            [userId]
+          );
+          walletRes = await client.query('SELECT * FROM wallets WHERE user_id = $1 FOR UPDATE', [userId]);
+        }
+
+        const currentBalance = parseFloat(walletRes.rows[0].available_balance);
+        let newBalance = currentBalance;
+        let diff = 0;
+
+        if (actionType === 'CREDIT') {
+          diff = amount;
+          newBalance = Math.round((currentBalance + amount) * 100) / 100;
+        } else if (actionType === 'DEBIT') {
+          if (currentBalance < amount) {
+            throw new Error(`Cannot debit ${amount} ETB: User only has ${currentBalance} ETB available`);
+          }
+          diff = -amount;
+          newBalance = Math.round((currentBalance - amount) * 100) / 100;
+        } else if (actionType === 'SET') {
+          diff = Math.round((amount - currentBalance) * 100) / 100;
+          newBalance = amount;
+        }
+
+        // Update wallet
+        await client.query(
+          'UPDATE wallets SET available_balance = $1, updated_at = NOW() WHERE user_id = $2',
+          [newBalance, userId]
+        );
+
+        // Record audit transaction in immutable ledger
+        const reference = `ADJ_${Date.now().toString().slice(-6)}`;
+        await client.query(
+          `INSERT INTO wallet_transactions 
+           (user_id, amount, type, status, reference, admin_id, description)
+           VALUES ($1, $2, 'ADMIN_ADJUSTMENT', 'COMPLETED', $3, $4, $5)`,
+          [userId, diff, reference, adminId, reason || `Admin balance adjustment (${actionType})`]
+        );
+
+        await client.query('COMMIT');
+        return { success: true, newBalance, diff, previousBalance: currentBalance };
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+    }
+
+    // In-memory update
+    const wallet = await this.getWallet(userId);
+    const currentBalance = wallet.availableBalance;
+    let newBalance = currentBalance;
+    let diff = 0;
+
+    if (actionType === 'CREDIT') {
+      diff = amount;
+      newBalance = Math.round((currentBalance + amount) * 100) / 100;
+    } else if (actionType === 'DEBIT') {
+      if (currentBalance < amount) {
+        throw new Error(`Cannot debit ${amount} ETB: User only has ${currentBalance} ETB available`);
+      }
+      diff = -amount;
+      newBalance = Math.round((currentBalance - amount) * 100) / 100;
+    } else if (actionType === 'SET') {
+      diff = Math.round((amount - currentBalance) * 100) / 100;
+      newBalance = amount;
+    }
+
+    this.updateMemWallet(userId, (w) => {
+      w.availableBalance = newBalance;
+    });
+
+    const reference = `ADJ_${Date.now().toString().slice(-6)}`;
+    memDb.walletTransactions.push({
+      id: `tx-${crypto.randomUUID()}`,
+      userId,
+      amount: diff,
+      type: 'ADMIN_ADJUSTMENT',
+      status: 'COMPLETED',
+      reference,
+      adminId,
+      description: reason || `Admin balance adjustment (${actionType})`,
+      createdAt: now,
+    });
+
+    return { success: true, newBalance, diff, previousBalance: currentBalance };
+  }
 }
