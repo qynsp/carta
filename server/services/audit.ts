@@ -12,7 +12,7 @@ export class AuditService {
     details: string,
     ipAddress?: string
   ) {
-    const id = `aud-${crypto.randomUUID()}`;
+    const id = crypto.randomUUID();
     const now = new Date().toISOString();
     const pool = getPool();
 
