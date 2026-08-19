@@ -815,6 +815,12 @@ export class GameEngineService {
         [cleanGameId]
       );
 
+      const sunkRes = await pool.query(
+        `SELECT DISTINCT ball_number FROM game_events WHERE game_id = $1 AND ball_number IS NOT NULL ORDER BY ball_number ASC`,
+        [cleanGameId]
+      );
+      const sunkBalls: number[] = sunkRes.rows.map((r) => parseInt(r.ball_number, 10));
+
       return {
         id: g.id,
         name: g.name,
@@ -836,6 +842,7 @@ export class GameEngineService {
         startedAt: g.started_at,
         completedAt: g.completed_at,
         players: playersRes.rows,
+        sunkBalls,
         lastEvent: lastEventRes.rows[0],
         tableNumber: g.table_number,
       };
@@ -866,8 +873,16 @@ export class GameEngineService {
     const winnerUser = g.winnerUserId ? memDb.users.get(g.winnerUserId) : undefined;
 
     const events = memDb.gameEvents
-      .filter((e) => e.gameId === g.id)
+      .filter((e) => e.gameId === g.id || e.gameId === cleanGameId)
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    const sunkBalls: number[] = Array.from(
+      new Set(
+        events
+          .filter((e) => e.ballNumber != null)
+          .map((e) => e.ballNumber!)
+      )
+    ).sort((a, b) => a - b);
 
     const lastEvent = events[0]
       ? {
@@ -902,6 +917,7 @@ export class GameEngineService {
       startedAt: g.startedAt,
       completedAt: g.completedAt,
       players,
+      sunkBalls,
       lastEvent,
       tableNumber: g.tableNumber,
     };

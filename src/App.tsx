@@ -35,6 +35,7 @@ import { SocketProvider, useSocket } from './context/SocketContext';
 import { LanguageProvider, useLanguage } from './context/LanguageContext';
 import { GamePublicState, WalletTransaction } from './types';
 import { PublicGameView } from './components/PublicGameView';
+import { OperatorBoard } from './components/OperatorBoard';
 import { AdminPortal } from './components/AdminPortal';
 import { CreateGameModal } from './components/CreateGameModal';
 import { DepositModal } from './components/DepositModal';
@@ -47,7 +48,7 @@ function MainAppContent({ onNavigateAdmin }: { onNavigateAdmin: () => void }) {
   const { isConnected } = useSocket();
   const { t, language, setLanguage } = useLanguage();
 
-  const [activeTab, setActiveTab] = useState<'games' | 'wallet' | 'leaderboard' | 'profile'>('games');
+  const [activeTab, setActiveTab] = useState<'games' | 'wallet' | 'leaderboard' | 'profile' | 'operator'>('games');
   const [selectedGameId, setSelectedGameId] = useState<string | null>(null);
   const [games, setGames] = useState<GamePublicState[]>([]);
   const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
@@ -243,10 +244,23 @@ function MainAppContent({ onNavigateAdmin }: { onNavigateAdmin: () => void }) {
               setSelectedGameId(null);
               fetchGames();
             }}
-            onOpenOperator={() => setActiveTab('operator')}
+            onOpenOperator={() => {
+              setSelectedGameId(null);
+              setActiveTab('operator');
+            }}
           />
         ) : (
           <>
+            {/* TAB: OPERATOR */}
+            {activeTab === 'operator' && (
+              <OperatorBoard
+                onBack={() => {
+                  setActiveTab('games');
+                  fetchGames();
+                }}
+              />
+            )}
+
             {/* TAB: GAMES (Arcade Lobby) */}
             {activeTab === 'games' && (
               <div className="space-y-6 animate-fadeIn">

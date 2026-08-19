@@ -64,11 +64,12 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
       setLocalGame(activeGame);
       setLoading(false);
 
+      const activeSunkLength = activeGame.sunkBalls?.length || 0;
       // Play ball pocket sound when a ball is sunk
-      if (activeGame.sunkBalls.length > prevSunkLengthRef.current) {
+      if (activeSunkLength > prevSunkLengthRef.current) {
         soundFx.playBallPocket();
       }
-      prevSunkLengthRef.current = activeGame.sunkBalls.length;
+      prevSunkLengthRef.current = activeSunkLength;
 
       // Play chime when turn shifts to user
       if (
@@ -84,7 +85,7 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
   }, [activeGame, gameId, user]);
 
   useEffect(() => {
-    if (privateState && privateState.game.id === gameId) {
+    if (privateState && privateState.game?.id === gameId) {
       setLocalPrivate(privateState);
     }
   }, [privateState, gameId]);
@@ -96,11 +97,13 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
 
       // Fetch public state
       const res = await fetch(`/api/games/${gameId}`);
-      if (!res.ok) throw new Error('Failed to load game');
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || 'Failed to load game');
+      }
       const data = await res.json();
-      setLocalGame(data.game);
-
       if (data.game) {
+        setLocalGame(data.game);
         prevSunkLengthRef.current = data.game.sunkBalls?.length || 0;
         prevTurnUserRef.current = data.game.currentTurnUserId;
       }
@@ -116,6 +119,7 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
         }
       }
     } catch (err: any) {
+      console.error('Error in fetchGameData:', err);
       setError(err.message || 'Could not load match details');
     } finally {
       setLoading(false);
@@ -173,7 +177,9 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
   };
 
   const game = localGame || activeGame;
-  const isPlayerInGame = game?.players.some((p) => p.userId === user?.id);
+  const players = game?.players || [];
+  const sunkBalls = game?.sunkBalls || [];
+  const isPlayerInGame = players.some((p) => p.userId === user?.id);
   const myCards = localPrivate?.myCards || [];
   const isMyTurn = Boolean(user && game?.currentTurnUserId === user.id);
   const isWinner = Boolean(user && game?.winnerUserId === user.id);
@@ -190,22 +196,31 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
     );
   }
 
-  if (error && !game) {
+  if (!game) {
     return (
-      <div className="p-6 rounded-3xl bg-rose-950/40 border-2 border-rose-800 text-center space-y-4 max-w-md mx-auto shadow-2xl">
+      <div className="p-6 rounded-3xl bg-rose-950/40 border-2 border-rose-800 text-center space-y-4 max-w-md mx-auto shadow-2xl animate-fadeIn my-10">
         <AlertCircle className="w-10 h-10 text-rose-400 mx-auto" />
-        <div className="text-rose-200 font-bold">{error}</div>
-        <button
-          onClick={onBack}
-          className="px-6 py-3 bg-zinc-800 hover:bg-zinc-700 rounded-2xl text-xs font-black uppercase text-white transition-all cursor-pointer shadow-md"
-        >
-          {t('backToLobby')}
-        </button>
+        <div className="text-rose-200 font-bold">
+          {error || (language === 'am' ? 'የጨዋታው መረጃ ሊገኝ አልቻለም' : 'Could not load match details')}
+        </div>
+        <div className="flex items-center justify-center gap-3 pt-2">
+          <button
+            onClick={fetchGameData}
+            className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 rounded-2xl text-xs font-black uppercase text-zinc-950 transition-all cursor-pointer shadow-md flex items-center gap-1.5"
+          >
+            <RefreshCw className="w-4 h-4" />
+            <span>{language === 'am' ? 'እንደገና ሞክር' : 'Retry'}</span>
+          </button>
+          <button
+            onClick={onBack}
+            className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 rounded-2xl text-xs font-black uppercase text-white transition-all cursor-pointer shadow-md"
+          >
+            {t('backToLobby')}
+          </button>
+        </div>
       </div>
     );
   }
-
-  if (!game) return null;
 
   return (
     <div className="space-y-4 animate-fadeIn">
@@ -310,11 +325,11 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
               <div className="flex justify-between items-center text-xs font-black text-zinc-400">
                 <span className="uppercase tracking-widest">{t('players')}</span>
                 <span className="text-emerald-400 font-mono">
-                  {game.players.length} {language === 'am' ? 'ተጫዋቾች ገብተዋል' : 'PLAYERS JOINED'}
+                  {players.length} {language === 'am' ? 'ተጫዋቾች ገብተዋል' : 'PLAYERS JOINED'}
                 </span>
               </div>
 
-              {game.players.map((p) => {
+              {players.map((p) => {
                 const isTurn = game.currentTurnUserId === p.userId && game.status === 'ACTIVE';
                 const isMe = p.userId === user?.id;
 
@@ -375,7 +390,7 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
                 )}
 
                 {/* If 2 or more players have joined, any joined player / host / operator can start the match! */}
-                {game.players.length >= 2 && (isPlayerInGame || isOperatorOrAdmin) && (
+                {players.length >= 2 && (isPlayerInGame || isOperatorOrAdmin) && (
                   <button
                     onClick={handleStartGame}
                     disabled={starting}
@@ -386,13 +401,13 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
                       {starting
                         ? '...'
                         : language === 'am'
-                        ? `⚡ ጨዋታውን ጀምር (${game.players.length} ተጫዋቾች)`
-                        : `⚡ START MATCH NOW (${game.players.length} PLAYERS)`}
+                        ? `⚡ ጨዋታውን ጀምር (${players.length} ተጫዋቾች)`
+                        : `⚡ START MATCH NOW (${players.length} PLAYERS)`}
                     </span>
                   </button>
                 )}
 
-                {game.players.length < 2 && (
+                {players.length < 2 && (
                   <div className="p-3 bg-[#080d1a] border border-zinc-800 rounded-2xl text-center text-xs text-zinc-400 font-bold">
                     {t('minPlayersNotice')}
                   </div>
@@ -457,8 +472,8 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
               <p className="text-zinc-400 text-xs max-w-sm mx-auto leading-relaxed font-medium">
                 {game.status === 'WAITING'
                   ? (language === 'am'
-                      ? `ተጫዋቾች እየተቀላቀሉ ነው (${game.players.length} ተጫዋቾች ገብተዋል)። 2 ወይም ከዚያ በላይ ሲሆኑ ጨዋታው ይጀመራል!`
-                      : `Players are joining (${game.players.length} joined). You can start anytime with 2 or more players!`)
+                      ? `ተጫዋቾች እየተቀላቀሉ ነው (${players.length} ተጫዋቾች ገብተዋል)። 2 ወይም ከዚያ በላይ ሲሆኑ ጨዋታው ይጀመራል!`
+                      : `Players are joining (${players.length} joined). You can start anytime with 2 or more players!`)
                   : 'Cards are active on the physical table.'}
               </p>
             </div>
@@ -488,7 +503,7 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
             {/* Balls Display Grid with 3D Spheres */}
             <div className="flex flex-wrap gap-2.5 py-1">
               {Array.from({ length: 15 }, (_, i) => i + 1).map((ballNum) => {
-                const isSunk = game.sunkBalls.includes(ballNum);
+                const isSunk = sunkBalls.includes(ballNum);
                 return (
                   <div
                     key={ballNum}
@@ -505,7 +520,7 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
 
           <div className="mt-4 pt-3 border-t border-zinc-800 flex justify-between items-center text-xs font-bold">
             <span className="text-zinc-400">
-              {language === 'am' ? 'የገቡ ኳሶች' : 'Balls Pocketed'}: {game.sunkBalls.length}/15
+              {language === 'am' ? 'የገቡ ኳሶች' : 'Balls Pocketed'}: {sunkBalls.length}/15
             </span>
             {isOperatorOrAdmin && onOpenOperator && (
               <button

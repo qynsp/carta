@@ -78,6 +78,7 @@ export interface GamePublicState {
   startedAt?: string;
   completedAt?: string;
   players: GamePlayerSummary[];
+  sunkBalls: number[];
   lastEvent?: GameEventPublic;
   tableNumber?: string;
 }
