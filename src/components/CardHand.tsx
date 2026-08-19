@@ -11,6 +11,7 @@ interface CardHandProps {
   isMyTurn?: boolean;
   isGameOver?: boolean;
   isWinner?: boolean;
+  onCardClick?: (cardValue: CardValue) => void;
 }
 
 export const CardHand: React.FC<CardHandProps> = ({
@@ -18,6 +19,7 @@ export const CardHand: React.FC<CardHandProps> = ({
   isMyTurn = false,
   isGameOver = false,
   isWinner = false,
+  onCardClick,
 }) => {
   const { t, language } = useLanguage();
 
@@ -146,11 +148,16 @@ export const CardHand: React.FC<CardHandProps> = ({
                 exit={{ scale: 0.5, opacity: 0, y: -20 }}
                 whileHover={{ y: -8, scale: 1.04 }}
                 transition={{ duration: 0.2, delay: index * 0.03 }}
-                className={`relative shrink-0 w-28 h-44 sm:w-32 sm:h-48 bg-gradient-to-b from-white to-slate-100 rounded-2xl shadow-2xl border-2 flex flex-col justify-between p-3 select-none transition-all cursor-default ${
-                  isMyTurn
-                    ? 'border-emerald-400 ring-4 ring-emerald-500/30'
-                    : 'border-slate-300'
+                className={`relative shrink-0 w-28 h-44 sm:w-32 sm:h-48 bg-gradient-to-b from-white to-slate-100 rounded-2xl shadow-2xl border-2 flex flex-col justify-between p-3 select-none transition-all ${
+                  isMyTurn && onCardClick
+                    ? 'border-emerald-400 ring-4 ring-emerald-500/40 cursor-pointer active:scale-95 hover:shadow-emerald-500/20'
+                    : 'border-slate-300 cursor-default'
                 }`}
+                onClick={() => {
+                  if (isMyTurn && onCardClick && !isGameOver) {
+                    onCardClick(cardVal);
+                  }
+                }}
               >
                 {/* Top Corner Card Indicator */}
                 <div className="flex items-center justify-between leading-none">

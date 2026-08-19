@@ -44,6 +44,8 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
   const [localPrivate, setLocalPrivate] = useState<GamePrivateState | null>(null);
   const [joining, setJoining] = useState<boolean>(false);
   const [starting, setStarting] = useState<boolean>(false);
+  const [shooting, setShooting] = useState<boolean>(false);
+  const [shotFeedback, setShotFeedback] = useState<string | null>(null);
 
   const prevTurnUserRef = useRef<string | null>(null);
   const prevSunkLengthRef = useRef<number>(0);
@@ -176,6 +178,66 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
     }
   };
 
+  const handleShootBall = async (ballNumber?: number, isScratch = false) => {
+    if (!token || shooting) return;
+    if (localGame?.status !== 'ACTIVE' && activeGame?.status !== 'ACTIVE') return;
+
+    setShooting(true);
+    setError(null);
+    setShotFeedback(null);
+
+    if (isScratch) {
+      soundFx.playScratch();
+    } else {
+      soundFx.playBallPocket();
+    }
+
+    try {
+      const res = await fetch(`/api/games/${gameId}/shot`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ballNumber,
+          isScratch,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to process shot event');
+
+      if (data.result?.outcome === 'GAME_WON') {
+        soundFx.playWinnerFanfare();
+      } else if (data.result?.outcome === 'MATCH_SUNK') {
+        soundFx.playCoinWin();
+      } else if (data.result?.outcome === 'SCRATCH') {
+        soundFx.playScratch();
+      }
+
+      const msg =
+        data.result?.message ||
+        (isScratch
+          ? language === 'am'
+            ? '⚠️ ፎል ተመዝግቧል! ካርድ ተጨምሮ ተራው አልፏል'
+            : '⚠️ Scratch recorded! Turn passed with +1 card'
+          : language === 'am'
+          ? `🎱 ኳስ #${ballNumber} ገብቷል!`
+          : `🎱 Ball #${ballNumber} pocketed!`);
+
+      setShotFeedback(msg);
+      setTimeout(() => setShotFeedback(null), 4500);
+
+      await fetchGameData();
+    } catch (err: any) {
+      setError(err.message || 'Error reporting shot');
+      setTimeout(() => setError(null), 4000);
+    } finally {
+      setShooting(false);
+    }
+  };
+
   const game = localGame || activeGame;
   const players = game?.players || [];
   const sunkBalls = game?.sunkBalls || [];
@@ -266,16 +328,44 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
           }`}
         >
           {isMyTurn ? (
-            <div className="space-y-1.5 relative z-10">
-              <div className="text-3xl sm:text-4xl font-black uppercase tracking-tight flex items-center justify-center gap-2">
-                <Zap className="w-8 h-8 fill-zinc-950 animate-bounce" />
-                <span>{t('yourTurn')}</span>
+            <div className="space-y-3 relative z-10">
+              <div className="space-y-1">
+                <div className="text-3xl sm:text-4xl font-black uppercase tracking-tight flex items-center justify-center gap-2">
+                  <Zap className="w-8 h-8 fill-zinc-950 animate-bounce" />
+                  <span>{t('yourTurn')}</span>
+                </div>
+                <p className="text-xs sm:text-sm font-black uppercase tracking-wide">
+                  {language === 'am'
+                    ? '🎯 ካርድህ ላይ ያለውን ኳስ ጠረጴዛው ላይ ምታና አስገባ! (ኳሱን ነካ በማድረግ መመዝገብ ትችላለህ)'
+                    : '🎯 Hit your ball into any pocket, or tap below to record your shot!'}
+                </p>
               </div>
-              <p className="text-xs sm:text-sm font-black uppercase tracking-wide">
-                {language === 'am'
-                  ? '🎯 ካርድህ ላይ ያለውን ኳስ ጠረጴዛው ላይ ምታና አስገባ!'
-                  : '🎯 Hit your secret card ball into any physical pocket now!'}
-              </p>
+
+              {/* Quick Shoot Actions in Banner */}
+              <div className="pt-2.5 border-t border-zinc-950/15 flex flex-wrap items-center justify-center gap-2">
+                {myCards.length > 0 &&
+                  (Array.from(new Set(myCards)) as number[]).map((cVal) => (
+                    <button
+                      key={cVal}
+                      type="button"
+                      onClick={() => handleShootBall(cVal)}
+                      disabled={shooting || sunkBalls.includes(cVal)}
+                      className="px-3 py-1.5 bg-zinc-950 hover:bg-zinc-900 text-emerald-400 border border-emerald-400/40 rounded-xl text-xs font-black shadow-md flex items-center gap-1.5 transition-all cursor-pointer hover:scale-105 active:scale-95 disabled:opacity-40"
+                    >
+                      <span>🎱</span>
+                      <span>{language === 'am' ? `ኳስ ${cVal} አስገባ` : `Sink #${cVal}`}</span>
+                    </button>
+                  ))}
+                <button
+                  type="button"
+                  onClick={() => handleShootBall(undefined, true)}
+                  disabled={shooting}
+                  className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-black shadow-md flex items-center gap-1.5 transition-all cursor-pointer hover:scale-105 active:scale-95 disabled:opacity-40"
+                >
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  <span>{language === 'am' ? '⚠️ ፎል/ጭረት' : '⚠️ Scratch / Foul'}</span>
+                </button>
+              </div>
             </div>
           ) : (
             <div className="flex items-center justify-center gap-3">
@@ -292,6 +382,14 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Real-time Shot Feedback Toast */}
+      {shotFeedback && (
+        <div className="p-4 rounded-2xl bg-emerald-500/20 border-2 border-emerald-400 text-emerald-300 font-black text-sm text-center flex items-center justify-center gap-2 shadow-xl animate-fadeIn">
+          <Sparkles className="w-5 h-5 text-emerald-400 animate-spin" />
+          <span>{shotFeedback}</span>
         </div>
       )}
 
@@ -440,6 +538,7 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
               isMyTurn={isMyTurn}
               isGameOver={game.status === 'COMPLETED'}
               isWinner={isWinner}
+              onCardClick={(val) => handleShootBall(val)}
             />
           ) : game.status === 'COMPLETED' ? (
             <div className="p-8 text-center space-y-4 my-auto">
@@ -496,26 +595,81 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
                 </p>
               </div>
               <span className="text-[11px] text-zinc-400 font-bold">
-                {language === 'am' ? '14 እና 15 ገለልተኛ ናቸው' : '14 & 15 neutral'}
+                {isMyTurn
+                  ? language === 'am'
+                    ? '⚡ ኳስ ምረጥና አስገባ'
+                    : '⚡ Tap any ball to sink'
+                  : language === 'am'
+                  ? '14 እና 15 ገለልተኛ ናቸው'
+                  : '14 & 15 neutral'}
               </span>
             </div>
 
-            {/* Balls Display Grid with 3D Spheres */}
+            {/* Balls Display Grid with Interactive Clickable 3D Spheres */}
             <div className="flex flex-wrap gap-2.5 py-1">
               {Array.from({ length: 15 }, (_, i) => i + 1).map((ballNum) => {
                 const isSunk = sunkBalls.includes(ballNum);
+                const isCardMatch = myCards.includes(ballNum);
+                const canClick =
+                  !isSunk &&
+                  !shooting &&
+                  game.status === 'ACTIVE' &&
+                  (isMyTurn || isOperatorOrAdmin || game.createdBy === user?.id);
+
                 return (
-                  <div
+                  <button
                     key={ballNum}
-                    className={`transition-all duration-300 ${
-                      isSunk ? 'opacity-20 grayscale scale-90 pointer-events-none' : 'opacity-100 scale-100 hover:scale-110'
-                    }`}
+                    type="button"
+                    onClick={() => {
+                      if (canClick) {
+                        handleShootBall(ballNum);
+                      }
+                    }}
+                    disabled={isSunk || shooting || game.status !== 'ACTIVE'}
+                    title={
+                      isSunk
+                        ? `Ball ${ballNum} pocketed`
+                        : isMyTurn
+                        ? `Tap to sink ball #${ballNum}`
+                        : `Ball ${ballNum}`
+                    }
+                    className={`transition-all duration-200 relative rounded-full p-0.5 select-none ${
+                      isSunk
+                        ? 'opacity-20 grayscale scale-90 cursor-not-allowed'
+                        : canClick
+                        ? 'opacity-100 scale-100 hover:scale-115 active:scale-95 cursor-pointer ring-2 ring-transparent hover:ring-emerald-400'
+                        : 'opacity-80 scale-100 cursor-default'
+                    } ${isCardMatch && !isSunk && isMyTurn ? 'ring-2 ring-amber-400 animate-pulse' : ''}`}
                   >
                     <PoolBall number={ballNum} size="md" />
-                  </div>
+                    {isCardMatch && !isSunk && isMyTurn && (
+                      <span className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-amber-400 text-zinc-950 text-[9px] font-black rounded-full flex items-center justify-center border border-zinc-900 shadow">
+                        ★
+                      </span>
+                    )}
+                  </button>
                 );
               })}
             </div>
+
+            {/* Quick Scratch Option in Section 3 */}
+            {game.status === 'ACTIVE' && (isMyTurn || isOperatorOrAdmin || game.createdBy === user?.id) && (
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={() => handleShootBall(undefined, true)}
+                  disabled={shooting}
+                  className="w-full py-2 px-3 rounded-xl bg-rose-950/50 hover:bg-rose-900/80 border border-rose-500/40 text-rose-300 hover:text-rose-100 text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer active:scale-98 disabled:opacity-50 shadow-md"
+                >
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  <span>
+                    {language === 'am'
+                      ? '⚠️ ፎል/ጭረት መዝግብ (ተራ ማለፍ + 1 ካርድ)'
+                      : '⚠️ Record Scratch / Foul (+1 Penalty Card)'}
+                  </span>
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="mt-4 pt-3 border-t border-zinc-800 flex justify-between items-center text-xs font-bold">

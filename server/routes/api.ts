@@ -242,6 +242,29 @@ apiRouter.post('/games/:id/cancel', requireAuth, async (req: AuthRequest, res: R
   }
 });
 
+// Process Shot (for Active Shooter, Host, or Operator)
+apiRouter.post('/games/:id/shot', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const { ballNumber, isScratch } = req.body;
+
+    if (!isScratch && (ballNumber === undefined || ballNumber < 1 || ballNumber > 15)) {
+      return res.status(400).json({ error: 'Please specify a valid ball number (1-15) or mark as scratch' });
+    }
+
+    const result = await GameEngineService.processShot(
+      req.params.id,
+      req.user!.userId,
+      ballNumber ? parseInt(ballNumber, 10) : undefined,
+      Boolean(isScratch)
+    );
+
+    const updatedGame = await GameEngineService.getPublicGameState(req.params.id);
+    return res.json({ result, game: updatedGame });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message });
+  }
+});
+
 // ==========================================
 // 3. TABLE OPERATOR ROUTES
 // ==========================================
