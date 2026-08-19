@@ -31,6 +31,22 @@ interface AdminDashboardProps {
   onLogout?: () => void;
 }
 
+const DEFAULT_SETTINGS: PlatformSettings = {
+  id: 1,
+  platformFeePercent: 5.0,
+  minDeposit: 10,
+  maxDeposit: 50000,
+  minWithdrawal: 50,
+  maxWithdrawal: 20000,
+  minGameEntry: 10,
+  maxGameEntry: 5000,
+  telebirrReceiverNumber: '0911223344',
+  telebirrReceiverName: 'Pool Cards Addis',
+  realMoneyEnabled: false,
+  currency: 'ETB',
+  maintenanceMode: false,
+};
+
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   adminToken,
   adminUser,
@@ -47,7 +63,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
   const [usersList, setUsersList] = useState<User[]>([]);
   const [gamesList, setGamesList] = useState<GamePublicState[]>([]);
-  const [settings, setSettings] = useState<PlatformSettings | null>(null);
+  const [settings, setSettings] = useState<PlatformSettings>(DEFAULT_SETTINGS);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
@@ -113,12 +129,37 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           setGamesList(data.games || []);
         }
       } else if (activeTab === 'settings') {
-        const res = await fetch('/api/admin/settings', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (res.ok) {
-          const data = await res.json();
-          setSettings(data.settings);
+        try {
+          const res = await fetch('/api/admin/settings', {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data && data.settings) {
+              setSettings((prev) => ({
+                ...prev,
+                ...data.settings,
+                telebirrReceiverNumber: data.settings.telebirrReceiverNumber || prev.telebirrReceiverNumber || '0911223344',
+                telebirrReceiverName: data.settings.telebirrReceiverName || prev.telebirrReceiverName || 'Pool Cards Addis',
+              }));
+            }
+          } else {
+            // Fallback to public settings endpoint
+            const pubRes = await fetch('/api/settings/public');
+            if (pubRes.ok) {
+              const pubData = await pubRes.json();
+              if (pubData && pubData.settings) {
+                setSettings((prev) => ({
+                  ...prev,
+                  ...pubData.settings,
+                  telebirrReceiverNumber: pubData.settings.telebirrReceiverNumber || prev.telebirrReceiverNumber || '0911223344',
+                  telebirrReceiverName: pubData.settings.telebirrReceiverName || prev.telebirrReceiverName || 'Pool Cards Addis',
+                }));
+              }
+            }
+          }
+        } catch (err) {
+          console.error('Settings fetch fallback error:', err);
         }
       } else if (activeTab === 'audit') {
         const res = await fetch('/api/admin/audit-logs', {
@@ -713,7 +754,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         )}
 
         {/* TAB 5: SETTINGS & TELEBIRR CONFIGURATION */}
-        {activeTab === 'settings' && settings && (
+        {activeTab === 'settings' && (
           <form onSubmit={handleSaveSettings} className="space-y-6 text-xs max-w-2xl">
             {/* Section 1: Telebirr Payment Receiver Details */}
             <div className="p-5 rounded-2xl bg-zinc-950/80 border-2 border-emerald-500/30 space-y-4 shadow-lg">
