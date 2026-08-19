@@ -178,7 +178,7 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
     }
   };
 
-  const handleShootBall = async (ballNumber?: number, isScratch = false) => {
+  const handleShootBall = async (ballNumber?: number, isScratch = false, isMiss = false) => {
     if (!token || shooting) return;
     if (localGame?.status !== 'ACTIVE' && activeGame?.status !== 'ACTIVE') return;
 
@@ -188,6 +188,8 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
 
     if (isScratch) {
       soundFx.playScratch();
+    } else if (isMiss) {
+      soundFx.playButtonClick();
     } else {
       soundFx.playBallPocket();
     }
@@ -202,6 +204,7 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
         body: JSON.stringify({
           ballNumber,
           isScratch,
+          isMiss,
         }),
       });
 
@@ -222,6 +225,10 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
           ? language === 'am'
             ? '⚠️ ፎል ተመዝግቧል! ካርድ ተጨምሮ ተራው አልፏል'
             : '⚠️ Scratch recorded! Turn passed with +1 card'
+          : isMiss
+          ? language === 'am'
+            ? '🎯 ምት አልፏል! ተራው ወደ ቀጣዩ ተጫዋች ሄዷል'
+            : '🎯 Shot missed! Turn passed to next player'
           : language === 'am'
           ? `🎱 ኳስ #${ballNumber} ገብቷል!`
           : `🎱 Ball #${ballNumber} pocketed!`);
@@ -358,7 +365,16 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
                   ))}
                 <button
                   type="button"
-                  onClick={() => handleShootBall(undefined, true)}
+                  onClick={() => handleShootBall(undefined, false, true)}
+                  disabled={shooting}
+                  className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-black shadow-md flex items-center gap-1.5 transition-all cursor-pointer hover:scale-105 active:scale-95 disabled:opacity-40"
+                >
+                  <span>🎯</span>
+                  <span>{language === 'am' ? 'ምት አምልጧል / ተራ ማለፍ' : 'Missed / Next Player'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleShootBall(undefined, true, false)}
                   disabled={shooting}
                   className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-black shadow-md flex items-center gap-1.5 transition-all cursor-pointer hover:scale-105 active:scale-95 disabled:opacity-40"
                 >
@@ -652,20 +668,33 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
               })}
             </div>
 
-            {/* Quick Scratch Option in Section 3 */}
+            {/* Quick Miss & Scratch Options in Section 3 */}
             {game.status === 'ACTIVE' && (isMyTurn || isOperatorOrAdmin || game.createdBy === user?.id) && (
-              <div className="mt-3">
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <button
                   type="button"
-                  onClick={() => handleShootBall(undefined, true)}
+                  onClick={() => handleShootBall(undefined, false, true)}
                   disabled={shooting}
-                  className="w-full py-2 px-3 rounded-xl bg-rose-950/50 hover:bg-rose-900/80 border border-rose-500/40 text-rose-300 hover:text-rose-100 text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer active:scale-98 disabled:opacity-50 shadow-md"
+                  className="py-2 px-3 rounded-xl bg-blue-950/60 hover:bg-blue-900/90 border border-blue-500/40 text-blue-300 hover:text-blue-100 text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer active:scale-98 disabled:opacity-50 shadow-md"
+                >
+                  <span>🎯</span>
+                  <span>
+                    {language === 'am'
+                      ? 'ምት አምልጧል (ተራ ማለፍ)'
+                      : 'Miss Shot / Next Player'}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleShootBall(undefined, true, false)}
+                  disabled={shooting}
+                  className="py-2 px-3 rounded-xl bg-rose-950/50 hover:bg-rose-900/80 border border-rose-500/40 text-rose-300 hover:text-rose-100 text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer active:scale-98 disabled:opacity-50 shadow-md"
                 >
                   <AlertCircle className="w-3.5 h-3.5" />
                   <span>
                     {language === 'am'
-                      ? '⚠️ ፎል/ጭረት መዝግብ (ተራ ማለፍ + 1 ካርድ)'
-                      : '⚠️ Record Scratch / Foul (+1 Penalty Card)'}
+                      ? 'ፎል / ስክራች (+1 ካርድ)'
+                      : 'Scratch / Foul (+1 Card)'}
                   </span>
                 </button>
               </div>

@@ -57,7 +57,7 @@ export const OperatorBoard: React.FC<OperatorBoardProps> = ({ initialGameId, onB
 
   const currentGame = activeGame?.id === selectedGameId ? activeGame : activeGames.find((g) => g.id === selectedGameId);
 
-  const handleShot = async (ballNumber?: number, isScratch = false) => {
+  const handleShot = async (ballNumber?: number, isScratch = false, isMiss = false) => {
     if (!selectedGameId || !token || processing) return;
 
     setProcessing(true);
@@ -66,6 +66,8 @@ export const OperatorBoard: React.FC<OperatorBoardProps> = ({ initialGameId, onB
 
     if (isScratch) {
       soundFx.playScratch();
+    } else if (isMiss) {
+      soundFx.playButtonClick();
     } else {
       soundFx.playBallPocket();
     }
@@ -80,6 +82,7 @@ export const OperatorBoard: React.FC<OperatorBoardProps> = ({ initialGameId, onB
         body: JSON.stringify({
           ballNumber,
           isScratch,
+          isMiss,
         }),
       });
 

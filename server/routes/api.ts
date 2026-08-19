@@ -245,17 +245,18 @@ apiRouter.post('/games/:id/cancel', requireAuth, async (req: AuthRequest, res: R
 // Process Shot (for Active Shooter, Host, or Operator)
 apiRouter.post('/games/:id/shot', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const { ballNumber, isScratch } = req.body;
+    const { ballNumber, isScratch, isMiss } = req.body;
 
-    if (!isScratch && (ballNumber === undefined || ballNumber < 1 || ballNumber > 15)) {
-      return res.status(400).json({ error: 'Please specify a valid ball number (1-15) or mark as scratch' });
+    if (!isScratch && !isMiss && (ballNumber === undefined || ballNumber < 1 || ballNumber > 15)) {
+      return res.status(400).json({ error: 'Please specify a valid ball number (1-15), mark as scratch, or pass/miss' });
     }
 
     const result = await GameEngineService.processShot(
       req.params.id,
       req.user!.userId,
       ballNumber ? parseInt(ballNumber, 10) : undefined,
-      Boolean(isScratch)
+      Boolean(isScratch),
+      Boolean(isMiss)
     );
 
     const updatedGame = await GameEngineService.getPublicGameState(req.params.id);
@@ -276,17 +277,18 @@ apiRouter.post(
   requireRole(['OPERATOR', 'ADMIN']),
   async (req: AuthRequest, res: Response) => {
     try {
-      const { ballNumber, isScratch } = req.body;
+      const { ballNumber, isScratch, isMiss } = req.body;
 
-      if (!isScratch && (ballNumber === undefined || ballNumber < 1 || ballNumber > 15)) {
-        return res.status(400).json({ error: 'Please specify a valid ball number (1-15) or mark as scratch' });
+      if (!isScratch && !isMiss && (ballNumber === undefined || ballNumber < 1 || ballNumber > 15)) {
+        return res.status(400).json({ error: 'Please specify a valid ball number (1-15), mark as scratch, or pass/miss' });
       }
 
       const result = await GameEngineService.processShot(
         req.params.id,
         req.user!.userId,
         ballNumber ? parseInt(ballNumber, 10) : undefined,
-        Boolean(isScratch)
+        Boolean(isScratch),
+        Boolean(isMiss)
       );
 
       const updatedGame = await GameEngineService.getPublicGameState(req.params.id);

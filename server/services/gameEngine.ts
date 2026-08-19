@@ -367,9 +367,10 @@ export class GameEngineService {
     gameId: string,
     operatorId: string,
     ballNumber?: number, // 1 to 15
-    isScratch = false
+    isScratch = false,
+    isMiss = false
   ): Promise<{
-    outcome: 'MATCH_SUNK' | 'NON_MATCH_SUNK' | 'SCRATCH' | 'GAME_WON';
+    outcome: 'MATCH_SUNK' | 'NON_MATCH_SUNK' | 'SCRATCH' | 'MISS' | 'GAME_WON';
     winnerId?: string;
     message: string;
   }> {
@@ -404,7 +405,7 @@ export class GameEngineService {
         const nextTurnUserRes = await client.query('SELECT first_name, username FROM users WHERE id = $1', [nextTurnUserId]);
         const nextPlayerName = nextTurnUserRes.rows[0]?.first_name || nextTurnUserRes.rows[0]?.username || 'Next player';
 
-        let outcome: 'MATCH_SUNK' | 'NON_MATCH_SUNK' | 'SCRATCH' | 'GAME_WON' = 'NON_MATCH_SUNK';
+        let outcome: 'MATCH_SUNK' | 'NON_MATCH_SUNK' | 'SCRATCH' | 'MISS' | 'GAME_WON' = 'NON_MATCH_SUNK';
         let message = '';
 
         if (isScratch) {
@@ -433,6 +434,21 @@ export class GameEngineService {
           );
 
           outcome = 'SCRATCH';
+        } else if (isMiss || (ballNumber === undefined && !isScratch)) {
+          // CASE E: MISS / PASS TURN TO NEXT SHOOTER
+          await client.query(
+            `UPDATE games SET current_turn_user_id = $1, current_turn_index = $2 WHERE id = $3`,
+            [nextTurnUserId, nextTurnIndex, cleanGameId]
+          );
+
+          message = `🎯 ${playerName} missed their shot. Turn passes to ${nextPlayerName}.`;
+          await client.query(
+            `INSERT INTO game_events (game_id, type, user_id, message, created_at)
+             VALUES ($1, 'TURN_PASSED', $2, $3, NOW())`,
+            [cleanGameId, currentTurnUserId, message]
+          );
+
+          outcome = 'MISS';
         } else if (ballNumber !== undefined && ballNumber >= 1 && ballNumber <= 15) {
           // Ball sank (1–15)
           if (ballNumber >= 1 && ballNumber <= 13) {
@@ -560,7 +576,7 @@ export class GameEngineService {
     const nextUser = memDb.users.get(nextTurnUserId);
     const nextPlayerName = nextUser?.firstName || nextUser?.username || 'Next player';
 
-    let outcome: 'MATCH_SUNK' | 'NON_MATCH_SUNK' | 'SCRATCH' | 'GAME_WON' = 'NON_MATCH_SUNK';
+    let outcome: 'MATCH_SUNK' | 'NON_MATCH_SUNK' | 'SCRATCH' | 'MISS' | 'GAME_WON' = 'NON_MATCH_SUNK';
     let message = '';
     const now = new Date().toISOString();
 
@@ -593,6 +609,22 @@ export class GameEngineService {
       });
 
       outcome = 'SCRATCH';
+    } else if (isMiss || (ballNumber === undefined && !isScratch)) {
+      // Miss / Pass turn to next shooter
+      game.currentTurnUserId = nextTurnUserId;
+      game.currentTurnIndex = nextTurnIndex;
+
+      message = `🎯 ${playerName} missed their shot. Turn passes to ${nextPlayerName}.`;
+      memDb.gameEvents.push({
+        id: `ge-${crypto.randomUUID()}`,
+        gameId: game.id,
+        type: 'TURN_PASSED',
+        userId: currentTurnUserId,
+        message,
+        createdAt: now,
+      });
+
+      outcome = 'MISS';
     } else if (ballNumber !== undefined && ballNumber >= 1 && ballNumber <= 15) {
       if (ballNumber >= 1 && ballNumber <= 13) {
         // Find matching unremoved cards for this player
