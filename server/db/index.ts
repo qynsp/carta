@@ -20,6 +20,20 @@ const { Pool } = pg;
 // Check for DATABASE_URL (Neon PostgreSQL)
 const DATABASE_URL = process.env.DATABASE_URL;
 
+/**
+ * Utility to extract clean, standard UUID (36 chars) if string contains prefix (e.g., game-uuid, u-uuid, dep-uuid)
+ */
+export function toCleanUuid(id?: string | null): string {
+  if (!id) return '';
+  const str = String(id).trim();
+  const uuidRegex = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+  const match = str.match(uuidRegex);
+  if (match) {
+    return match[0];
+  }
+  return str;
+}
+
 export interface DBUser extends User {
   updatedAt?: string;
 }

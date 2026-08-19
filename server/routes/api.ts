@@ -3,7 +3,7 @@ import { AuthService, TokenPayload } from '../services/auth';
 import { GameEngineService } from '../services/gameEngine';
 import { WalletLedgerService } from '../services/walletLedger';
 import { AuditService } from '../services/audit';
-import { memDb, getPool } from '../db';
+import { memDb, getPool, toCleanUuid } from '../db';
 import { PlatformSettings, UserRole } from '../../src/types';
 
 export const apiRouter = express.Router();
@@ -478,6 +478,51 @@ apiRouter.get('/admin/users', requireAuth, requireRole(['ADMIN']), async (req: A
       };
     });
     return res.json({ users });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin Update User Profile (Name, Username, Role)
+apiRouter.post('/admin/users/:id/update-profile', requireAuth, requireRole(['ADMIN']), async (req: AuthRequest, res: Response) => {
+  try {
+    const { firstName, lastName, username, role } = req.body;
+    const cleanUserId = req.params.id;
+    const pool = getPool();
+
+    if (pool) {
+      const cleanDbId = toCleanUuid(cleanUserId);
+      await pool.query(
+        `UPDATE users SET 
+           first_name = COALESCE($1, first_name),
+           last_name = COALESCE($2, last_name),
+           username = COALESCE($3, username),
+           role = COALESCE($4, role),
+           updated_at = NOW()
+         WHERE id = $5`,
+        [firstName?.trim() || null, lastName?.trim() || null, username?.trim() || null, role || null, cleanDbId]
+      );
+    } else {
+      const u = memDb.users.get(cleanUserId);
+      if (u) {
+        if (firstName !== undefined) u.firstName = firstName.trim();
+        if (lastName !== undefined) u.lastName = lastName.trim();
+        if (username !== undefined) u.username = username.trim();
+        if (role !== undefined) u.role = role;
+        u.updatedAt = new Date().toISOString();
+      }
+    }
+
+    await AuditService.log(
+      req.user!.userId,
+      req.user!.username,
+      'UPDATE_USER_PROFILE',
+      'USER',
+      cleanUserId,
+      `Updated user profile: Name=${firstName} ${lastName || ''}, Username=@${username}`
+    );
+
+    return res.json({ success: true, message: 'User profile updated successfully' });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }

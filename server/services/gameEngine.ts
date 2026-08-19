@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { memDb, getPool, DBGame, DBGamePlayer, DBPlayerCard, DBGameEvent } from '../db';
+import { memDb, getPool, DBGame, DBGamePlayer, DBPlayerCard, DBGameEvent, toCleanUuid } from '../db';
 import { CardValue, GameStatus, GamePublicState, GamePrivateState, GameEventPublic, GamePlayerSummary } from '../../src/types';
 import { WalletLedgerService } from './walletLedger';
 
@@ -46,7 +46,8 @@ export class GameEngineService {
       feePercent = memDb.platformSettings.platformFeePercent;
     }
 
-    const gameId = `game-${crypto.randomUUID()}`;
+    const cleanCreatorId = toCleanUuid(creatorId);
+    const gameId = crypto.randomUUID();
     // Initial pot starts with 1 player (the host) and increases as more players join
     const totalPot = entryFee * 1;
     const feeAmount = (totalPot * feePercent) / 100;
@@ -54,7 +55,7 @@ export class GameEngineService {
 
     // 1. Deduct entry fee for creator
     if (entryFee > 0) {
-      await WalletLedgerService.deductGameEntry(creatorId, gameId, entryFee, name);
+      await WalletLedgerService.deductGameEntry(cleanCreatorId, gameId, entryFee, name);
     }
 
     const now = new Date().toISOString();
@@ -68,21 +69,21 @@ export class GameEngineService {
           `INSERT INTO games 
            (id, name, status, max_players, entry_fee, platform_fee_percent, total_pot, winner_payout, created_by, table_number, created_at)
            VALUES ($1, $2, 'WAITING', $3, $4, $5, $6, $7, $8, $9, NOW())`,
-          [gameId, name, maxPlayers, entryFee, feePercent, totalPot, winnerPayout, creatorId, tableNumber || 'Table 1']
+          [gameId, name, maxPlayers, entryFee, feePercent, totalPot, winnerPayout, cleanCreatorId, tableNumber || 'Table 1']
         );
 
         // Add creator as player 0
         await client.query(
           `INSERT INTO game_players (game_id, user_id, turn_order, is_winner, joined_at)
            VALUES ($1, $2, 0, FALSE, NOW())`,
-          [gameId, creatorId]
+          [gameId, cleanCreatorId]
         );
 
         // Public event
         await client.query(
           `INSERT INTO game_events (game_id, type, user_id, message, created_at)
            VALUES ($1, 'GAME_CREATED', $2, $3, NOW())`,
-          [gameId, creatorId, `${creatorName} created the open table "${name}" (${entryFee} ETB entry)`]
+          [gameId, cleanCreatorId, `${creatorName} created the open table "${name}" (${entryFee} ETB entry)`]
         );
 
         await client.query('COMMIT');
@@ -103,7 +104,7 @@ export class GameEngineService {
         platformFeePercent: feePercent,
         totalPot,
         winnerPayout,
-        createdBy: creatorId,
+        createdBy: cleanCreatorId,
         currentTurnIndex: 0,
         tableNumber: tableNumber || 'Table 1',
         createdAt: now,
@@ -113,7 +114,7 @@ export class GameEngineService {
       memDb.gamePlayers.push({
         id: `gp-${crypto.randomUUID()}`,
         gameId,
-        userId: creatorId,
+        userId: cleanCreatorId,
         turnOrder: 0,
         isWinner: false,
         joinedAt: now,
@@ -123,7 +124,7 @@ export class GameEngineService {
         id: `ge-${crypto.randomUUID()}`,
         gameId,
         type: 'GAME_CREATED',
-        userId: creatorId,
+        userId: cleanCreatorId,
         message: `${creatorName} created the open table "${name}" (${entryFee} ETB entry)`,
         createdAt: now,
       });
@@ -138,20 +139,22 @@ export class GameEngineService {
    */
   static async joinGame(userId: string, username: string, gameId: string): Promise<boolean> {
     const pool = getPool();
+    const cleanGameId = toCleanUuid(gameId);
+    const cleanUserId = toCleanUuid(userId);
 
     if (pool) {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
 
-        const gameRes = await client.query('SELECT * FROM games WHERE id = $1 FOR UPDATE', [gameId]);
+        const gameRes = await client.query('SELECT * FROM games WHERE id = $1 FOR UPDATE', [cleanGameId]);
         if (gameRes.rows.length === 0) throw new Error('Game not found');
         const game = gameRes.rows[0];
 
         if (game.status !== 'WAITING') throw new Error('Game is not open for joining');
 
-        const playersRes = await client.query('SELECT * FROM game_players WHERE game_id = $1 ORDER BY turn_order ASC', [gameId]);
-        if (playersRes.rows.some((p: any) => p.user_id === userId)) {
+        const playersRes = await client.query('SELECT * FROM game_players WHERE game_id = $1 ORDER BY turn_order ASC', [cleanGameId]);
+        if (playersRes.rows.some((p: any) => p.user_id === cleanUserId)) {
           throw new Error('You have already joined this game');
         }
 
@@ -164,7 +167,7 @@ export class GameEngineService {
 
         // Deduct entry fee
         if (entryFee > 0) {
-          await WalletLedgerService.deductGameEntry(userId, gameId, entryFee, game.name);
+          await WalletLedgerService.deductGameEntry(cleanUserId, cleanGameId, entryFee, game.name);
         }
 
         const turnOrder = playersRes.rows.length;
@@ -175,19 +178,19 @@ export class GameEngineService {
         await client.query(
           `INSERT INTO game_players (game_id, user_id, turn_order, is_winner, joined_at)
            VALUES ($1, $2, $3, FALSE, NOW())`,
-          [gameId, userId, turnOrder]
+          [cleanGameId, cleanUserId, turnOrder]
         );
 
         // Update pot dynamically
         await client.query(
           `UPDATE games SET total_pot = $1, winner_payout = $2 WHERE id = $3`,
-          [newTotalPot, newWinnerPayout, gameId]
+          [newTotalPot, newWinnerPayout, cleanGameId]
         );
 
         await client.query(
           `INSERT INTO game_events (game_id, type, user_id, message, created_at)
            VALUES ($1, 'PLAYER_JOINED', $2, $3, NOW())`,
-          [gameId, userId, `${username} joined the game (Pot is now ${newWinnerPayout.toFixed(0)} ETB)`]
+          [cleanGameId, cleanUserId, `${username} joined the game (Pot is now ${newWinnerPayout.toFixed(0)} ETB)`]
         );
 
         await client.query('COMMIT');
@@ -199,12 +202,12 @@ export class GameEngineService {
       }
     } else {
       // In-memory
-      const game = memDb.games.get(gameId);
+      const game = memDb.games.get(cleanGameId) || memDb.games.get(gameId);
       if (!game) throw new Error('Game not found');
       if (game.status !== 'WAITING') throw new Error('Game is not open for joining');
 
-      const existingPlayers = memDb.gamePlayers.filter((p) => p.gameId === gameId);
-      if (existingPlayers.some((p) => p.userId === userId)) {
+      const existingPlayers = memDb.gamePlayers.filter((p) => p.gameId === cleanGameId || p.gameId === gameId);
+      if (existingPlayers.some((p) => p.userId === cleanUserId || p.userId === userId)) {
         throw new Error('You have already joined this game');
       }
       if (existingPlayers.length >= game.maxPlayers) {
@@ -212,7 +215,7 @@ export class GameEngineService {
       }
 
       if (game.entryFee > 0) {
-        await WalletLedgerService.deductGameEntry(userId, gameId, game.entryFee, game.name);
+        await WalletLedgerService.deductGameEntry(cleanUserId, game.id, game.entryFee, game.name);
       }
 
       const turnOrder = existingPlayers.length;
@@ -227,8 +230,8 @@ export class GameEngineService {
 
       memDb.gamePlayers.push({
         id: `gp-${crypto.randomUUID()}`,
-        gameId,
-        userId,
+        gameId: game.id,
+        userId: cleanUserId,
         turnOrder,
         isWinner: false,
         joinedAt: now,
@@ -236,15 +239,15 @@ export class GameEngineService {
 
       memDb.gameEvents.push({
         id: `ge-${crypto.randomUUID()}`,
-        gameId,
+        gameId: game.id,
         type: 'PLAYER_JOINED',
-        userId,
+        userId: cleanUserId,
         message: `${username} joined the game (Pot is now ${newWinnerPayout.toFixed(0)} ETB)`,
         createdAt: now,
       });
     }
 
-    if (broadcastFn) broadcastFn(gameId, 'GAME_UPDATED');
+    if (broadcastFn) broadcastFn(cleanGameId, 'GAME_UPDATED');
     return true;
   }
 
@@ -253,6 +256,8 @@ export class GameEngineService {
    */
   static async startGame(gameId: string, initiatorUserId: string): Promise<boolean> {
     const pool = getPool();
+    const cleanGameId = toCleanUuid(gameId);
+    const cleanInitiatorId = toCleanUuid(initiatorUserId);
     const now = new Date().toISOString();
 
     if (pool) {
@@ -260,13 +265,13 @@ export class GameEngineService {
       try {
         await client.query('BEGIN');
 
-        const gameRes = await client.query('SELECT * FROM games WHERE id = $1 FOR UPDATE', [gameId]);
+        const gameRes = await client.query('SELECT * FROM games WHERE id = $1 FOR UPDATE', [cleanGameId]);
         if (gameRes.rows.length === 0) throw new Error('Game not found');
         const game = gameRes.rows[0];
 
         if (game.status !== 'WAITING') throw new Error('Game is already active or finished');
 
-        const playersRes = await client.query('SELECT * FROM game_players WHERE game_id = $1 ORDER BY turn_order ASC', [gameId]);
+        const playersRes = await client.query('SELECT * FROM game_players WHERE game_id = $1 ORDER BY turn_order ASC', [cleanGameId]);
         const players = playersRes.rows;
 
         if (players.length < 2) {
@@ -276,7 +281,7 @@ export class GameEngineService {
         // START GAME & DEAL 5 CARDS TO EACH PLAYER
         await client.query(
           `UPDATE games SET status = 'ACTIVE', started_at = NOW(), current_turn_user_id = $1, current_turn_index = 0 WHERE id = $2`,
-          [players[0].user_id, gameId]
+          [players[0].user_id, cleanGameId]
         );
 
         for (const p of players) {
@@ -285,7 +290,7 @@ export class GameEngineService {
             await client.query(
               `INSERT INTO player_cards (game_id, user_id, card_value, is_removed, is_scratch_card, added_at)
                VALUES ($1, $2, $3, FALSE, FALSE, NOW())`,
-              [gameId, p.user_id, cardValue]
+              [cleanGameId, p.user_id, cardValue]
             );
           }
         }
@@ -296,7 +301,7 @@ export class GameEngineService {
         await client.query(
           `INSERT INTO game_events (game_id, type, message, created_at)
            VALUES ($1, 'GAME_STARTED', $2, NOW())`,
-          [gameId, `Game started with ${players.length} players! 5 cards dealt to each. ${firstName}'s turn to shoot.`]
+          [cleanGameId, `Game started with ${players.length} players! 5 cards dealt to each. ${firstName}'s turn to shoot.`]
         );
 
         await client.query('COMMIT');
@@ -308,11 +313,11 @@ export class GameEngineService {
       }
     } else {
       // In-memory
-      const game = memDb.games.get(gameId);
+      const game = memDb.games.get(cleanGameId) || memDb.games.get(gameId);
       if (!game) throw new Error('Game not found');
       if (game.status !== 'WAITING') throw new Error('Game is already active or finished');
 
-      const players = memDb.gamePlayers.filter((p) => p.gameId === gameId).sort((a, b) => a.turnOrder - b.turnOrder);
+      const players = memDb.gamePlayers.filter((p) => p.gameId === game.id).sort((a, b) => a.turnOrder - b.turnOrder);
       if (players.length < 2) {
         throw new Error('At least 2 players are needed to start the pool match');
       }
@@ -328,7 +333,7 @@ export class GameEngineService {
           const cardVal = this.generateRandomCard();
           memDb.playerCards.push({
             id: `pc-${crypto.randomUUID()}`,
-            gameId,
+            gameId: game.id,
             userId: p.userId,
             cardValue: cardVal,
             isRemoved: false,
@@ -343,14 +348,14 @@ export class GameEngineService {
 
       memDb.gameEvents.push({
         id: `ge-${crypto.randomUUID()}`,
-        gameId,
+        gameId: game.id,
         type: 'GAME_STARTED',
         message: `Game started with ${players.length} players! 5 cards dealt to each. ${firstName}'s turn to shoot.`,
         createdAt: now,
       });
     }
 
-    if (broadcastFn) broadcastFn(gameId, 'GAME_UPDATED');
+    if (broadcastFn) broadcastFn(cleanGameId, 'GAME_UPDATED');
     return true;
   }
 
@@ -369,13 +374,14 @@ export class GameEngineService {
     message: string;
   }> {
     const pool = getPool();
+    const cleanGameId = toCleanUuid(gameId);
 
     if (pool) {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
 
-        const gameRes = await client.query('SELECT * FROM games WHERE id = $1 FOR UPDATE', [gameId]);
+        const gameRes = await client.query('SELECT * FROM games WHERE id = $1 FOR UPDATE', [cleanGameId]);
         if (gameRes.rows.length === 0) throw new Error('Game not found');
         const game = gameRes.rows[0];
 
@@ -389,7 +395,7 @@ export class GameEngineService {
         const currentTurnUserRes = await client.query('SELECT first_name, username FROM users WHERE id = $1', [currentTurnUserId]);
         const playerName = currentTurnUserRes.rows[0]?.first_name || currentTurnUserRes.rows[0]?.username || 'Current player';
 
-        const playersRes = await client.query('SELECT * FROM game_players WHERE game_id = $1 ORDER BY turn_order ASC', [gameId]);
+        const playersRes = await client.query('SELECT * FROM game_players WHERE game_id = $1 ORDER BY turn_order ASC', [cleanGameId]);
         const players = playersRes.rows;
         const currentTurnIndex = game.current_turn_index;
         const nextTurnIndex = (currentTurnIndex + 1) % players.length;
@@ -409,13 +415,13 @@ export class GameEngineService {
           await client.query(
             `INSERT INTO player_cards (game_id, user_id, card_value, is_removed, is_scratch_card, added_at)
              VALUES ($1, $2, $3, FALSE, TRUE, NOW())`,
-            [gameId, currentTurnUserId, newCard]
+            [cleanGameId, currentTurnUserId, newCard]
           );
 
           // 3. Player loses turn -> advance turn
           await client.query(
             `UPDATE games SET current_turn_user_id = $1, current_turn_index = $2 WHERE id = $3`,
-            [nextTurnUserId, nextTurnIndex, gameId]
+            [nextTurnUserId, nextTurnIndex, cleanGameId]
           );
 
           // 4. Public event (NEVER reveals what card was added)
@@ -423,7 +429,7 @@ export class GameEngineService {
           await client.query(
             `INSERT INTO game_events (game_id, type, user_id, message, created_at)
              VALUES ($1, 'SCRATCH', $2, $3, NOW())`,
-            [gameId, currentTurnUserId, message]
+            [cleanGameId, currentTurnUserId, message]
           );
 
           outcome = 'SCRATCH';
@@ -433,7 +439,7 @@ export class GameEngineService {
             // Check if player has this card
             const matchCardsRes = await client.query(
               `SELECT id FROM player_cards WHERE game_id = $1 AND user_id = $2 AND card_value = $3 AND is_removed = FALSE`,
-              [gameId, currentTurnUserId, ballNumber]
+              [cleanGameId, currentTurnUserId, ballNumber]
             );
 
             if (matchCardsRes.rows.length > 0) {
@@ -442,13 +448,13 @@ export class GameEngineService {
               await client.query(
                 `UPDATE player_cards SET is_removed = TRUE, removed_at = NOW() 
                  WHERE game_id = $1 AND user_id = $2 AND card_value = $3 AND is_removed = FALSE`,
-                [gameId, currentTurnUserId, ballNumber]
+                [cleanGameId, currentTurnUserId, ballNumber]
               );
 
               // Check if player has any remaining unremoved cards
               const remainingRes = await client.query(
                 `SELECT COUNT(*) as count FROM player_cards WHERE game_id = $1 AND user_id = $2 AND is_removed = FALSE`,
-                [gameId, currentTurnUserId]
+                [cleanGameId, currentTurnUserId]
               );
               const remainingCount = parseInt(remainingRes.rows[0].count, 10);
 
@@ -457,26 +463,26 @@ export class GameEngineService {
                 outcome = 'GAME_WON';
                 await client.query(
                   `UPDATE games SET status = 'COMPLETED', completed_at = NOW(), winner_user_id = $1 WHERE id = $2`,
-                  [currentTurnUserId, gameId]
+                  [currentTurnUserId, cleanGameId]
                 );
 
                 await client.query(
                   `UPDATE game_players SET is_winner = TRUE WHERE game_id = $1 AND user_id = $2`,
-                  [gameId, currentTurnUserId]
+                  [cleanGameId, currentTurnUserId]
                 );
 
                 message = `🏆 ${playerName} sank the ${ballNumber}-ball and won the game!`;
                 await client.query(
                   `INSERT INTO game_events (game_id, type, user_id, ball_number, message, created_at)
                    VALUES ($1, 'GAME_WON', $2, $3, $4, NOW())`,
-                  [gameId, currentTurnUserId, ballNumber, message]
+                  [cleanGameId, currentTurnUserId, ballNumber, message]
                 );
 
                 // Credit Winner Payout
                 const payout = parseFloat(game.winner_payout);
                 const pot = parseFloat(game.total_pot);
                 const fee = pot - payout;
-                await WalletLedgerService.creditWinnerPayout(currentTurnUserId, gameId, payout, fee, game.name);
+                await WalletLedgerService.creditWinnerPayout(currentTurnUserId, cleanGameId, payout, fee, game.name);
               } else {
                 // Keep turn!
                 outcome = 'MATCH_SUNK';
@@ -484,7 +490,7 @@ export class GameEngineService {
                 await client.query(
                   `INSERT INTO game_events (game_id, type, user_id, ball_number, message, created_at)
                    VALUES ($1, 'BALL_SUNK', $2, $3, $4, NOW())`,
-                  [gameId, currentTurnUserId, ballNumber, message]
+                  [cleanGameId, currentTurnUserId, ballNumber, message]
                 );
               }
             } else {
@@ -492,14 +498,14 @@ export class GameEngineService {
               outcome = 'NON_MATCH_SUNK';
               await client.query(
                 `UPDATE games SET current_turn_user_id = $1, current_turn_index = $2 WHERE id = $3`,
-                [nextTurnUserId, nextTurnIndex, gameId]
+                [nextTurnUserId, nextTurnIndex, cleanGameId]
               );
 
               message = `🎱 ${playerName} sank the ${ballNumber}-ball (no card match). Turn passes to ${nextPlayerName}.`;
               await client.query(
                 `INSERT INTO game_events (game_id, type, user_id, ball_number, message, created_at)
                  VALUES ($1, 'BALL_SUNK', $2, $3, $4, NOW())`,
-                [gameId, currentTurnUserId, ballNumber, message]
+                [cleanGameId, currentTurnUserId, ballNumber, message]
               );
             }
           } else {
@@ -507,20 +513,20 @@ export class GameEngineService {
             outcome = 'NON_MATCH_SUNK';
             await client.query(
               `UPDATE games SET current_turn_user_id = $1, current_turn_index = $2 WHERE id = $3`,
-              [nextTurnUserId, nextTurnIndex, gameId]
+              [nextTurnUserId, nextTurnIndex, cleanGameId]
             );
 
             message = `🎱 ${playerName} sank the ${ballNumber}-ball. Turn passes to ${nextPlayerName}.`;
             await client.query(
               `INSERT INTO game_events (game_id, type, user_id, ball_number, message, created_at)
                VALUES ($1, 'BALL_SUNK', $2, $3, $4, NOW())`,
-              [gameId, currentTurnUserId, ballNumber, message]
+              [cleanGameId, currentTurnUserId, ballNumber, message]
             );
           }
         }
 
         await client.query('COMMIT');
-        if (broadcastFn) broadcastFn(gameId, 'GAME_UPDATED');
+        if (broadcastFn) broadcastFn(cleanGameId, 'GAME_UPDATED');
 
         return {
           outcome,
@@ -536,7 +542,7 @@ export class GameEngineService {
     }
 
     // In-Memory Implementation
-    const game = memDb.games.get(gameId);
+    const game = memDb.games.get(cleanGameId) || memDb.games.get(gameId);
     if (!game) throw new Error('Game not found');
     if (game.status !== 'ACTIVE') throw new Error('Game is not currently active');
 
@@ -546,7 +552,7 @@ export class GameEngineService {
     const currentUser = memDb.users.get(currentTurnUserId);
     const playerName = currentUser?.firstName || currentUser?.username || 'Current player';
 
-    const players = memDb.gamePlayers.filter((p) => p.gameId === gameId).sort((a, b) => a.turnOrder - b.turnOrder);
+    const players = memDb.gamePlayers.filter((p) => p.gameId === game.id).sort((a, b) => a.turnOrder - b.turnOrder);
     const currentTurnIndex = game.currentTurnIndex;
     const nextTurnIndex = (currentTurnIndex + 1) % players.length;
     const nextTurnUserId = players[nextTurnIndex].userId;
@@ -563,7 +569,7 @@ export class GameEngineService {
       const newCard = this.generateRandomCard();
       memDb.playerCards.push({
         id: `pc-${crypto.randomUUID()}`,
-        gameId,
+        gameId: game.id,
         userId: currentTurnUserId,
         cardValue: newCard,
         isRemoved: false,
@@ -579,7 +585,7 @@ export class GameEngineService {
       message = `⚠️ ${playerName} scratched. Turn passes to ${nextPlayerName}.`;
       memDb.gameEvents.push({
         id: `ge-${crypto.randomUUID()}`,
-        gameId,
+        gameId: game.id,
         type: 'SCRATCH',
         userId: currentTurnUserId,
         message,
@@ -591,7 +597,7 @@ export class GameEngineService {
       if (ballNumber >= 1 && ballNumber <= 13) {
         // Find matching unremoved cards for this player
         const playerUnremoved = memDb.playerCards.filter(
-          (c) => c.gameId === gameId && c.userId === currentTurnUserId && !c.isRemoved
+          (c) => c.gameId === game.id && c.userId === currentTurnUserId && !c.isRemoved
         );
 
         const hasMatch = playerUnremoved.some((c) => c.cardValue === ballNumber);
@@ -606,7 +612,7 @@ export class GameEngineService {
           }
 
           const remainingCards = memDb.playerCards.filter(
-            (c) => c.gameId === gameId && c.userId === currentTurnUserId && !c.isRemoved
+            (c) => c.gameId === game.id && c.userId === currentTurnUserId && !c.isRemoved
           );
 
           if (remainingCards.length === 0) {
@@ -622,7 +628,7 @@ export class GameEngineService {
             message = `🏆 ${playerName} sank the ${ballNumber}-ball and won the game!`;
             memDb.gameEvents.push({
               id: `ge-${crypto.randomUUID()}`,
-              gameId,
+              gameId: game.id,
               type: 'GAME_WON',
               userId: currentTurnUserId,
               ballNumber,
@@ -632,14 +638,14 @@ export class GameEngineService {
 
             // Credit Winner
             const fee = game.totalPot - game.winnerPayout;
-            await WalletLedgerService.creditWinnerPayout(currentTurnUserId, gameId, game.winnerPayout, fee, game.name);
+            await WalletLedgerService.creditWinnerPayout(currentTurnUserId, game.id, game.winnerPayout, fee, game.name);
           } else {
             // Keep turn
             outcome = 'MATCH_SUNK';
             message = `🎱 ${playerName} sank the ${ballNumber}-ball! Turn continues.`;
             memDb.gameEvents.push({
               id: `ge-${crypto.randomUUID()}`,
-              gameId,
+              gameId: game.id,
               type: 'BALL_SUNK',
               userId: currentTurnUserId,
               ballNumber,
@@ -656,7 +662,7 @@ export class GameEngineService {
           message = `🎱 ${playerName} sank the ${ballNumber}-ball (no card match). Turn passes to ${nextPlayerName}.`;
           memDb.gameEvents.push({
             id: `ge-${crypto.randomUUID()}`,
-            gameId,
+            gameId: game.id,
             type: 'BALL_SUNK',
             userId: currentTurnUserId,
             ballNumber,
@@ -673,7 +679,7 @@ export class GameEngineService {
         message = `🎱 ${playerName} sank the ${ballNumber}-ball. Turn passes to ${nextPlayerName}.`;
         memDb.gameEvents.push({
           id: `ge-${crypto.randomUUID()}`,
-          gameId,
+          gameId: game.id,
           type: 'BALL_SUNK',
           userId: currentTurnUserId,
           ballNumber,
@@ -683,7 +689,7 @@ export class GameEngineService {
       }
     }
 
-    if (broadcastFn) broadcastFn(gameId, 'GAME_UPDATED');
+    if (broadcastFn) broadcastFn(cleanGameId, 'GAME_UPDATED');
     return {
       outcome,
       winnerId: outcome === 'GAME_WON' ? currentTurnUserId : undefined,
@@ -696,13 +702,14 @@ export class GameEngineService {
    */
   static async cancelGame(gameId: string, adminOrOperatorId: string, reason: string): Promise<boolean> {
     const pool = getPool();
+    const cleanGameId = toCleanUuid(gameId);
 
     if (pool) {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
 
-        const gameRes = await client.query('SELECT * FROM games WHERE id = $1 FOR UPDATE', [gameId]);
+        const gameRes = await client.query('SELECT * FROM games WHERE id = $1 FOR UPDATE', [cleanGameId]);
         if (gameRes.rows.length === 0) throw new Error('Game not found');
         const game = gameRes.rows[0];
 
@@ -711,21 +718,21 @@ export class GameEngineService {
         }
 
         const entryFee = parseFloat(game.entry_fee);
-        const playersRes = await client.query('SELECT user_id FROM game_players WHERE game_id = $1', [gameId]);
+        const playersRes = await client.query('SELECT user_id FROM game_players WHERE game_id = $1', [cleanGameId]);
 
         // Refund all players
         if (entryFee > 0) {
           for (const p of playersRes.rows) {
-            await WalletLedgerService.refundGameEntry(p.user_id, gameId, entryFee, reason);
+            await WalletLedgerService.refundGameEntry(p.user_id, cleanGameId, entryFee, reason);
           }
         }
 
-        await client.query(`UPDATE games SET status = 'CANCELLED', completed_at = NOW() WHERE id = $1`, [gameId]);
+        await client.query(`UPDATE games SET status = 'CANCELLED', completed_at = NOW() WHERE id = $1`, [cleanGameId]);
 
         await client.query(
           `INSERT INTO game_events (game_id, type, message, created_at)
            VALUES ($1, 'GAME_CANCELLED', $2, NOW())`,
-          [gameId, `Game cancelled: ${reason}. All entry fees refunded.`]
+          [cleanGameId, `Game cancelled: ${reason}. All entry fees refunded.`]
         );
 
         await client.query('COMMIT');
@@ -736,16 +743,16 @@ export class GameEngineService {
         client.release();
       }
     } else {
-      const game = memDb.games.get(gameId);
+      const game = memDb.games.get(cleanGameId) || memDb.games.get(gameId);
       if (!game) throw new Error('Game not found');
       if (game.status === 'COMPLETED' || game.status === 'CANCELLED') {
         throw new Error(`Game cannot be cancelled (status: ${game.status})`);
       }
 
-      const players = memDb.gamePlayers.filter((p) => p.gameId === gameId);
+      const players = memDb.gamePlayers.filter((p) => p.gameId === game.id);
       if (game.entryFee > 0) {
         for (const p of players) {
-          await WalletLedgerService.refundGameEntry(p.userId, gameId, game.entryFee, reason);
+          await WalletLedgerService.refundGameEntry(p.userId, game.id, game.entryFee, reason);
         }
       }
 
@@ -754,14 +761,14 @@ export class GameEngineService {
 
       memDb.gameEvents.push({
         id: `ge-${crypto.randomUUID()}`,
-        gameId,
+        gameId: game.id,
         type: 'GAME_CANCELLED',
         message: `Game cancelled: ${reason}. All entry fees refunded.`,
         createdAt: new Date().toISOString(),
       });
     }
 
-    if (broadcastFn) broadcastFn(gameId, 'GAME_UPDATED');
+    if (broadcastFn) broadcastFn(cleanGameId, 'GAME_UPDATED');
     return true;
   }
 
@@ -770,9 +777,10 @@ export class GameEngineService {
    */
   static async getPublicGameState(gameId: string): Promise<GamePublicState> {
     const pool = getPool();
+    const cleanGameId = toCleanUuid(gameId);
 
     if (pool) {
-      const gameRes = await pool.query('SELECT * FROM games WHERE id = $1', [gameId]);
+      const gameRes = await pool.query('SELECT * FROM games WHERE id = $1', [cleanGameId]);
       if (gameRes.rows.length === 0) throw new Error('Game not found');
       const g = gameRes.rows[0];
 
@@ -783,7 +791,7 @@ export class GameEngineService {
          JOIN users u ON gp.user_id = u.id
          WHERE gp.game_id = $1
          ORDER BY gp.turn_order ASC`,
-        [gameId]
+        [cleanGameId]
       );
 
       const creatorRes = await pool.query('SELECT first_name, username FROM users WHERE id = $1', [g.created_by]);
@@ -804,7 +812,7 @@ export class GameEngineService {
       const lastEventRes = await pool.query(
         `SELECT id, game_id as "gameId", type, user_id as "userId", ball_number as "ballNumber", message, created_at as "createdAt"
          FROM game_events WHERE game_id = $1 ORDER BY created_at DESC LIMIT 1`,
-        [gameId]
+        [cleanGameId]
       );
 
       return {
@@ -834,11 +842,11 @@ export class GameEngineService {
     }
 
     // In-memory
-    const g = memDb.games.get(gameId);
+    const g = memDb.games.get(cleanGameId) || memDb.games.get(gameId);
     if (!g) throw new Error('Game not found');
 
     const gpList = memDb.gamePlayers
-      .filter((p) => p.gameId === gameId)
+      .filter((p) => p.gameId === g.id)
       .sort((a, b) => a.turnOrder - b.turnOrder);
 
     const players: GamePlayerSummary[] = gpList.map((p) => {
@@ -858,7 +866,7 @@ export class GameEngineService {
     const winnerUser = g.winnerUserId ? memDb.users.get(g.winnerUserId) : undefined;
 
     const events = memDb.gameEvents
-      .filter((e) => e.gameId === gameId)
+      .filter((e) => e.gameId === g.id)
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
     const lastEvent = events[0]
@@ -904,7 +912,9 @@ export class GameEngineService {
    * ONLY reveals calling player's unremoved cards.
    */
   static async getPrivateState(gameId: string, userId: string): Promise<GamePrivateState> {
-    const publicState = await this.getPublicGameState(gameId);
+    const cleanGameId = toCleanUuid(gameId);
+    const cleanUserId = toCleanUuid(userId);
+    const publicState = await this.getPublicGameState(cleanGameId);
     const pool = getPool();
 
     if (pool) {
@@ -912,12 +922,12 @@ export class GameEngineService {
         `SELECT card_value, is_scratch_card FROM player_cards 
          WHERE game_id = $1 AND user_id = $2 AND is_removed = FALSE 
          ORDER BY added_at ASC`,
-        [gameId, userId]
+        [cleanGameId, cleanUserId]
       );
 
       const allCardsRes = await pool.query(
         `SELECT is_scratch_card FROM player_cards WHERE game_id = $1 AND user_id = $2`,
-        [gameId, userId]
+        [cleanGameId, cleanUserId]
       );
 
       const scratchesCount = allCardsRes.rows.filter((c: any) => c.is_scratch_card).length;
@@ -935,11 +945,11 @@ export class GameEngineService {
 
     // In-memory
     const unremovedCards = memDb.playerCards.filter(
-      (c) => c.gameId === gameId && c.userId === userId && !c.isRemoved
+      (c) => (c.gameId === cleanGameId || c.gameId === gameId) && (c.userId === cleanUserId || c.userId === userId) && !c.isRemoved
     );
 
     const allPlayerCards = memDb.playerCards.filter(
-      (c) => c.gameId === gameId && c.userId === userId
+      (c) => (c.gameId === cleanGameId || c.gameId === gameId) && (c.userId === cleanUserId || c.userId === userId)
     );
 
     const scratchesCount = allPlayerCards.filter((c) => c.isScratchCard).length;

@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { memDb, getPool, DBWalletTransaction } from '../db';
+import { memDb, getPool, DBWalletTransaction, toCleanUuid } from '../db';
 import { TransactionType, TransactionStatus, DepositStatus, WithdrawalStatus } from '../../src/types';
 
 export class WalletLedgerService {
@@ -7,11 +7,12 @@ export class WalletLedgerService {
    * Get user wallet with available and locked balance
    */
   static async getWallet(userId: string) {
+    const cleanUserId = toCleanUuid(userId);
     const pool = getPool();
     if (pool) {
       const res = await pool.query(
         'SELECT id, user_id as "userId", available_balance as "availableBalance", locked_balance as "lockedBalance", currency FROM wallets WHERE user_id = $1',
-        [userId]
+        [cleanUserId]
       );
       if (res.rows.length > 0) {
         return {
@@ -25,18 +26,18 @@ export class WalletLedgerService {
     }
 
     // In-memory fallback
-    let wallet = memDb.wallets.get(userId);
+    let wallet = memDb.wallets.get(cleanUserId) || memDb.wallets.get(userId);
     if (!wallet) {
       wallet = {
-        id: `w-${userId}`,
-        userId,
+        id: `w-${cleanUserId}`,
+        userId: cleanUserId,
         availableBalance: 0,
         lockedBalance: 0,
         currency: 'ETB',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
-      memDb.wallets.set(userId, wallet);
+      memDb.wallets.set(cleanUserId, wallet);
     }
 
     return {
@@ -52,18 +53,19 @@ export class WalletLedgerService {
    * Internal helper to update in-memory wallet directly
    */
   private static updateMemWallet(userId: string, updateFn: (w: { availableBalance: number; lockedBalance: number; updatedAt: string }) => void) {
-    let wallet = memDb.wallets.get(userId);
+    const cleanUserId = toCleanUuid(userId);
+    let wallet = memDb.wallets.get(cleanUserId) || memDb.wallets.get(userId);
     if (!wallet) {
       wallet = {
-        id: `w-${userId}`,
-        userId,
+        id: `w-${cleanUserId}`,
+        userId: cleanUserId,
         availableBalance: 0,
         lockedBalance: 0,
         currency: 'ETB',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
-      memDb.wallets.set(userId, wallet);
+      memDb.wallets.set(cleanUserId, wallet);
     }
     updateFn(wallet);
     wallet.updatedAt = new Date().toISOString();
@@ -73,11 +75,12 @@ export class WalletLedgerService {
    * Get transaction history for user
    */
   static async getTransactions(userId: string, limit = 50) {
+    const cleanUserId = toCleanUuid(userId);
     const pool = getPool();
     if (pool) {
       const res = await pool.query(
         'SELECT id, user_id as "userId", amount, type, status, reference, game_id as "gameId", admin_id as "adminId", description, created_at as "createdAt" FROM wallet_transactions WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2',
-        [userId, limit]
+        [cleanUserId, limit]
       );
       return res.rows.map((row) => ({
         ...row,
@@ -86,7 +89,7 @@ export class WalletLedgerService {
     }
 
     return memDb.walletTransactions
-      .filter((tx) => tx.userId === userId)
+      .filter((tx) => tx.userId === cleanUserId || tx.userId === userId)
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
       .slice(0, limit);
   }
@@ -96,7 +99,9 @@ export class WalletLedgerService {
    */
   static async deductGameEntry(userId: string, gameId: string, amount: number, gameName: string) {
     const pool = getPool();
-    const idempotencyKey = `game-entry-${gameId}-${userId}`;
+    const cleanUserId = toCleanUuid(userId);
+    const cleanGameId = toCleanUuid(gameId);
+    const idempotencyKey = `game-entry-${cleanGameId}-${cleanUserId}`;
 
     if (pool) {
       const client = await pool.connect();
@@ -113,7 +118,7 @@ export class WalletLedgerService {
         // Lock wallet row FOR UPDATE
         const walletRes = await client.query(
           'SELECT available_balance FROM wallets WHERE user_id = $1 FOR UPDATE',
-          [userId]
+          [cleanUserId]
         );
 
         if (walletRes.rows.length === 0) {
@@ -128,7 +133,7 @@ export class WalletLedgerService {
         // Deduct
         await client.query(
           'UPDATE wallets SET available_balance = available_balance - $1, updated_at = NOW() WHERE user_id = $2',
-          [amount, userId]
+          [amount, cleanUserId]
         );
 
         // Record immutable ledger entry
@@ -136,7 +141,7 @@ export class WalletLedgerService {
           `INSERT INTO wallet_transactions 
            (user_id, amount, type, status, reference, game_id, description, idempotency_key)
            VALUES ($1, $2, 'GAME_ENTRY', 'COMPLETED', $3, $4, $5, $6)`,
-          [userId, -amount, `GAME_${gameId.slice(0, 8)}`, gameId, `Entry fee for game "${gameName}"`, idempotencyKey]
+          [cleanUserId, -amount, `GAME_${cleanGameId.slice(0, 8)}`, cleanGameId, `Entry fee for game "${gameName}"`, idempotencyKey]
         );
 
         await client.query('COMMIT');
@@ -153,24 +158,24 @@ export class WalletLedgerService {
     const existing = memDb.walletTransactions.find((tx) => tx.idempotencyKey === idempotencyKey);
     if (existing) return true;
 
-    const wallet = await this.getWallet(userId);
+    const wallet = await this.getWallet(cleanUserId);
     if (wallet.availableBalance < amount) {
       throw new Error(`Insufficient balance: Available ${wallet.availableBalance} ETB, required ${amount} ETB`);
     }
 
-    this.updateMemWallet(userId, (w) => {
+    this.updateMemWallet(cleanUserId, (w) => {
       w.availableBalance -= amount;
     });
 
     const now = new Date().toISOString();
     memDb.walletTransactions.push({
       id: `tx-${crypto.randomUUID()}`,
-      userId,
+      userId: cleanUserId,
       amount: -amount,
       type: 'GAME_ENTRY',
       status: 'COMPLETED',
-      reference: `GAME_${gameId.slice(0, 8)}`,
-      gameId,
+      reference: `GAME_${cleanGameId.slice(0, 8)}`,
+      gameId: cleanGameId,
       description: `Entry fee for game "${gameName}"`,
       idempotencyKey,
       createdAt: now,
@@ -183,7 +188,9 @@ export class WalletLedgerService {
    * Refund Game Entry if game is cancelled
    */
   static async refundGameEntry(userId: string, gameId: string, amount: number, reason: string) {
-    const idempotencyKey = `game-refund-${gameId}-${userId}`;
+    const cleanUserId = toCleanUuid(userId);
+    const cleanGameId = toCleanUuid(gameId);
+    const idempotencyKey = `game-refund-${cleanGameId}-${cleanUserId}`;
     const pool = getPool();
 
     if (pool) {
@@ -198,14 +205,14 @@ export class WalletLedgerService {
 
         await client.query(
           'UPDATE wallets SET available_balance = available_balance + $1, updated_at = NOW() WHERE user_id = $2',
-          [amount, userId]
+          [amount, cleanUserId]
         );
 
         await client.query(
           `INSERT INTO wallet_transactions 
            (user_id, amount, type, status, reference, game_id, description, idempotency_key)
            VALUES ($1, $2, 'GAME_REFUND', 'COMPLETED', $3, $4, $5, $6)`,
-          [userId, amount, `REFUND_${gameId.slice(0, 8)}`, gameId, `Refund for cancelled game: ${reason}`, idempotencyKey]
+          [cleanUserId, amount, `REFUND_${cleanGameId.slice(0, 8)}`, cleanGameId, `Refund for cancelled game: ${reason}`, idempotencyKey]
         );
 
         await client.query('COMMIT');
@@ -222,19 +229,19 @@ export class WalletLedgerService {
     const existing = memDb.walletTransactions.find((tx) => tx.idempotencyKey === idempotencyKey);
     if (existing) return true;
 
-    this.updateMemWallet(userId, (w) => {
+    this.updateMemWallet(cleanUserId, (w) => {
       w.availableBalance += amount;
     });
 
     const now = new Date().toISOString();
     memDb.walletTransactions.push({
       id: `tx-${crypto.randomUUID()}`,
-      userId,
+      userId: cleanUserId,
       amount,
       type: 'GAME_REFUND',
       status: 'COMPLETED',
-      reference: `REFUND_${gameId.slice(0, 8)}`,
-      gameId,
+      reference: `REFUND_${cleanGameId.slice(0, 8)}`,
+      gameId: cleanGameId,
       description: `Refund for cancelled game: ${reason}`,
       idempotencyKey,
       createdAt: now,
@@ -246,7 +253,9 @@ export class WalletLedgerService {
    * Credit Winnings to Winner & Record Platform Fee
    */
   static async creditWinnerPayout(winnerId: string, gameId: string, payoutAmount: number, platformFeeAmount: number, gameName: string) {
-    const idempotencyKey = `game-win-${gameId}-${winnerId}`;
+    const cleanWinnerId = toCleanUuid(winnerId);
+    const cleanGameId = toCleanUuid(gameId);
+    const idempotencyKey = `game-win-${cleanGameId}-${cleanWinnerId}`;
     const pool = getPool();
 
     if (pool) {
@@ -262,14 +271,14 @@ export class WalletLedgerService {
         // Credit Winner
         await client.query(
           'UPDATE wallets SET available_balance = available_balance + $1, updated_at = NOW() WHERE user_id = $2',
-          [payoutAmount, winnerId]
+          [payoutAmount, cleanWinnerId]
         );
 
         await client.query(
           `INSERT INTO wallet_transactions 
            (user_id, amount, type, status, reference, game_id, description, idempotency_key)
            VALUES ($1, $2, 'WIN', 'COMPLETED', $3, $4, $5, $6)`,
-          [winnerId, payoutAmount, `WIN_${gameId.slice(0, 8)}`, gameId, `Winner payout for game "${gameName}"`, idempotencyKey]
+          [cleanWinnerId, payoutAmount, `WIN_${cleanGameId.slice(0, 8)}`, cleanGameId, `Winner payout for game "${gameName}"`, idempotencyKey]
         );
 
         // Platform fee record
@@ -278,7 +287,7 @@ export class WalletLedgerService {
             `INSERT INTO wallet_transactions 
              (user_id, amount, type, status, reference, game_id, description, idempotency_key)
              VALUES ($1, $2, 'PLATFORM_FEE', 'COMPLETED', $3, $4, $5, $6)`,
-            [winnerId, platformFeeAmount, `FEE_${gameId.slice(0, 8)}`, gameId, `Platform fee collected for game "${gameName}"`, `fee-${gameId}`]
+            [cleanWinnerId, platformFeeAmount, `FEE_${cleanGameId.slice(0, 8)}`, cleanGameId, `Platform fee collected for game "${gameName}"`, `fee-${cleanGameId}`]
           );
         }
 
@@ -296,19 +305,19 @@ export class WalletLedgerService {
     const existing = memDb.walletTransactions.find((tx) => tx.idempotencyKey === idempotencyKey);
     if (existing) return true;
 
-    this.updateMemWallet(winnerId, (w) => {
+    this.updateMemWallet(cleanWinnerId, (w) => {
       w.availableBalance += payoutAmount;
     });
 
     const now = new Date().toISOString();
     memDb.walletTransactions.push({
       id: `tx-${crypto.randomUUID()}`,
-      userId: winnerId,
+      userId: cleanWinnerId,
       amount: payoutAmount,
       type: 'WIN',
       status: 'COMPLETED',
-      reference: `WIN_${gameId.slice(0, 8)}`,
-      gameId,
+      reference: `WIN_${cleanGameId.slice(0, 8)}`,
+      gameId: cleanGameId,
       description: `Winner payout for game "${gameName}"`,
       idempotencyKey,
       createdAt: now,
@@ -317,14 +326,14 @@ export class WalletLedgerService {
     if (platformFeeAmount > 0) {
       memDb.walletTransactions.push({
         id: `tx-${crypto.randomUUID()}`,
-        userId: winnerId,
+        userId: cleanWinnerId,
         amount: platformFeeAmount,
         type: 'PLATFORM_FEE',
         status: 'COMPLETED',
-        reference: `FEE_${gameId.slice(0, 8)}`,
-        gameId,
+        reference: `FEE_${cleanGameId.slice(0, 8)}`,
+        gameId: cleanGameId,
         description: `Platform fee collected for game "${gameName}"`,
-        idempotencyKey: `fee-${gameId}`,
+        idempotencyKey: `fee-${cleanGameId}`,
         createdAt: now,
       });
     }
@@ -338,7 +347,8 @@ export class WalletLedgerService {
   static async requestDeposit(userId: string, username: string, amount: number, reference: string, paymentMethod = 'Telebirr', notes?: string) {
     if (amount <= 0) throw new Error('Deposit amount must be positive');
 
-    const depositId = `dep-${crypto.randomUUID()}`;
+    const cleanUserId = toCleanUuid(userId);
+    const depositId = crypto.randomUUID();
     const now = new Date().toISOString();
 
     const pool = getPool();
@@ -346,12 +356,12 @@ export class WalletLedgerService {
       await pool.query(
         `INSERT INTO deposits (id, user_id, amount, reference, payment_method, notes, status, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, 'PENDING', NOW())`,
-        [depositId, userId, amount, reference, paymentMethod, notes || null]
+        [depositId, cleanUserId, amount, reference, paymentMethod, notes || null]
       );
     } else {
       memDb.deposits.set(depositId, {
         id: depositId,
-        userId,
+        userId: cleanUserId,
         amount,
         reference,
         paymentMethod,
@@ -368,14 +378,16 @@ export class WalletLedgerService {
    * Admin approves manual deposit -> Credits user wallet & creates immutable ledger record
    */
   static async approveDeposit(depositId: string, adminId: string) {
-    const idempotencyKey = `approve-dep-${depositId}`;
+    const cleanDepositId = toCleanUuid(depositId);
+    const cleanAdminId = toCleanUuid(adminId);
+    const idempotencyKey = `approve-dep-${cleanDepositId}`;
     const pool = getPool();
 
     if (pool) {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
-        const depRes = await client.query('SELECT * FROM deposits WHERE id = $1 FOR UPDATE', [depositId]);
+        const depRes = await client.query('SELECT * FROM deposits WHERE id = $1 FOR UPDATE', [cleanDepositId]);
         if (depRes.rows.length === 0) throw new Error('Deposit not found');
         const dep = depRes.rows[0];
 
@@ -388,7 +400,7 @@ export class WalletLedgerService {
         // Mark deposit APPROVED
         await client.query(
           'UPDATE deposits SET status = $1, reviewed_by = $2, reviewed_at = NOW() WHERE id = $3',
-          ['APPROVED', adminId, depositId]
+          ['APPROVED', cleanAdminId, cleanDepositId]
         );
 
         // Credit Wallet
@@ -402,7 +414,7 @@ export class WalletLedgerService {
           `INSERT INTO wallet_transactions 
            (user_id, amount, type, status, reference, admin_id, description, idempotency_key)
            VALUES ($1, $2, 'DEPOSIT', 'COMPLETED', $3, $4, $5, $6)`,
-          [dep.user_id, amount, dep.reference, adminId, `Manual deposit approved (${dep.payment_method})`, idempotencyKey]
+          [dep.user_id, amount, dep.reference, cleanAdminId, `Manual deposit approved (${dep.payment_method})`, idempotencyKey]
         );
 
         await client.query('COMMIT');
@@ -416,12 +428,12 @@ export class WalletLedgerService {
     }
 
     // In-memory
-    const dep = memDb.deposits.get(depositId);
+    const dep = memDb.deposits.get(cleanDepositId) || memDb.deposits.get(depositId);
     if (!dep) throw new Error('Deposit not found');
     if (dep.status !== 'PENDING') throw new Error(`Deposit has already been ${dep.status.toLowerCase()}`);
 
     dep.status = 'APPROVED';
-    dep.reviewedBy = adminId;
+    dep.reviewedBy = cleanAdminId;
     dep.reviewedAt = new Date().toISOString();
 
     this.updateMemWallet(dep.userId, (w) => {
@@ -436,7 +448,7 @@ export class WalletLedgerService {
       type: 'DEPOSIT',
       status: 'COMPLETED',
       reference: dep.reference,
-      adminId,
+      adminId: cleanAdminId,
       description: `Manual deposit approved (${dep.paymentMethod})`,
       idempotencyKey,
       createdAt: now,
@@ -449,22 +461,24 @@ export class WalletLedgerService {
    * Admin rejects manual deposit
    */
   static async rejectDeposit(depositId: string, adminId: string, reason: string) {
+    const cleanDepositId = toCleanUuid(depositId);
+    const cleanAdminId = toCleanUuid(adminId);
     const pool = getPool();
     if (pool) {
       const res = await pool.query(
         `UPDATE deposits SET status = 'REJECTED', reviewed_by = $1, reviewed_at = NOW(), rejection_reason = $2 WHERE id = $3 AND status = 'PENDING'`,
-        [adminId, reason, depositId]
+        [cleanAdminId, reason, cleanDepositId]
       );
       if (res.rowCount === 0) throw new Error('Deposit not found or already reviewed');
       return true;
     }
 
-    const dep = memDb.deposits.get(depositId);
+    const dep = memDb.deposits.get(cleanDepositId) || memDb.deposits.get(depositId);
     if (!dep) throw new Error('Deposit not found');
     if (dep.status !== 'PENDING') throw new Error(`Deposit has already been ${dep.status.toLowerCase()}`);
 
     dep.status = 'REJECTED';
-    dep.reviewedBy = adminId;
+    dep.reviewedBy = cleanAdminId;
     dep.reviewedAt = new Date().toISOString();
     dep.rejectionReason = reason;
     return true;
@@ -476,7 +490,8 @@ export class WalletLedgerService {
   static async requestWithdrawal(userId: string, username: string, amount: number, telebirrPhone: string, accountName?: string) {
     if (amount <= 0) throw new Error('Withdrawal amount must be positive');
 
-    const withdrawalId = `wdr-${crypto.randomUUID()}`;
+    const cleanUserId = toCleanUuid(userId);
+    const withdrawalId = crypto.randomUUID();
     const pool = getPool();
 
     if (pool) {
@@ -484,7 +499,7 @@ export class WalletLedgerService {
       try {
         await client.query('BEGIN');
 
-        const walletRes = await client.query('SELECT available_balance FROM wallets WHERE user_id = $1 FOR UPDATE', [userId]);
+        const walletRes = await client.query('SELECT available_balance FROM wallets WHERE user_id = $1 FOR UPDATE', [cleanUserId]);
         if (walletRes.rows.length === 0) throw new Error('Wallet not found');
 
         const available = parseFloat(walletRes.rows[0].available_balance);
@@ -495,14 +510,14 @@ export class WalletLedgerService {
         // Lock balance
         await client.query(
           'UPDATE wallets SET available_balance = available_balance - $1, locked_balance = locked_balance + $1, updated_at = NOW() WHERE user_id = $2',
-          [amount, userId]
+          [amount, cleanUserId]
         );
 
         // Record withdrawal request
         await client.query(
           `INSERT INTO withdrawals (id, user_id, amount, telebirr_phone, account_name, status, created_at)
            VALUES ($1, $2, $3, $4, $5, 'PENDING', NOW())`,
-          [withdrawalId, userId, amount, telebirrPhone, accountName || null]
+          [withdrawalId, cleanUserId, amount, telebirrPhone, accountName || null]
         );
 
         await client.query('COMMIT');
@@ -516,12 +531,12 @@ export class WalletLedgerService {
     }
 
     // In-memory
-    const wallet = await this.getWallet(userId);
+    const wallet = await this.getWallet(cleanUserId);
     if (wallet.availableBalance < amount) {
       throw new Error(`Insufficient available balance: ${wallet.availableBalance} ETB, requested ${amount} ETB`);
     }
 
-    this.updateMemWallet(userId, (w) => {
+    this.updateMemWallet(cleanUserId, (w) => {
       w.availableBalance -= amount;
       w.lockedBalance += amount;
     });
@@ -529,7 +544,7 @@ export class WalletLedgerService {
     const now = new Date().toISOString();
     memDb.withdrawals.set(withdrawalId, {
       id: withdrawalId,
-      userId,
+      userId: cleanUserId,
       amount,
       telebirrPhone,
       accountName,
@@ -544,14 +559,16 @@ export class WalletLedgerService {
    * Admin approves & confirms manual withdrawal payout (removes locked balance and writes WITHDRAWAL ledger)
    */
   static async finalizeWithdrawalPaid(withdrawalId: string, adminId: string) {
-    const idempotencyKey = `paid-wdr-${withdrawalId}`;
+    const cleanWithdrawalId = toCleanUuid(withdrawalId);
+    const cleanAdminId = toCleanUuid(adminId);
+    const idempotencyKey = `paid-wdr-${cleanWithdrawalId}`;
     const pool = getPool();
 
     if (pool) {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
-        const wdrRes = await client.query('SELECT * FROM withdrawals WHERE id = $1 FOR UPDATE', [withdrawalId]);
+        const wdrRes = await client.query('SELECT * FROM withdrawals WHERE id = $1 FOR UPDATE', [cleanWithdrawalId]);
         if (wdrRes.rows.length === 0) throw new Error('Withdrawal request not found');
         const wdr = wdrRes.rows[0];
 
@@ -561,7 +578,7 @@ export class WalletLedgerService {
         // Mark PAID
         await client.query(
           `UPDATE withdrawals SET status = 'PAID', reviewed_by = $1, reviewed_at = NOW() WHERE id = $2`,
-          [adminId, withdrawalId]
+          [cleanAdminId, cleanWithdrawalId]
         );
 
         // Remove from locked balance
@@ -575,7 +592,7 @@ export class WalletLedgerService {
           `INSERT INTO wallet_transactions 
            (user_id, amount, type, status, reference, admin_id, description, idempotency_key)
            VALUES ($1, $2, 'WITHDRAWAL', 'COMPLETED', $3, $4, $5, $6)`,
-          [wdr.user_id, -amount, `WDR_${wdr.telebirr_phone}`, adminId, `Withdrawal to Telebirr ${wdr.telebirr_phone}`, idempotencyKey]
+          [wdr.user_id, -amount, `WDR_${wdr.telebirr_phone}`, cleanAdminId, `Withdrawal to Telebirr ${wdr.telebirr_phone}`, idempotencyKey]
         );
 
         await client.query('COMMIT');
@@ -589,12 +606,12 @@ export class WalletLedgerService {
     }
 
     // In-memory
-    const wdr = memDb.withdrawals.get(withdrawalId);
+    const wdr = memDb.withdrawals.get(cleanWithdrawalId) || memDb.withdrawals.get(withdrawalId);
     if (!wdr) throw new Error('Withdrawal request not found');
     if (wdr.status !== 'PENDING') throw new Error(`Withdrawal has already been ${wdr.status.toLowerCase()}`);
 
     wdr.status = 'PAID';
-    wdr.reviewedBy = adminId;
+    wdr.reviewedBy = cleanAdminId;
     wdr.reviewedAt = new Date().toISOString();
 
     this.updateMemWallet(wdr.userId, (w) => {
@@ -609,7 +626,7 @@ export class WalletLedgerService {
       type: 'WITHDRAWAL',
       status: 'COMPLETED',
       reference: `WDR_${wdr.telebirrPhone}`,
-      adminId,
+      adminId: cleanAdminId,
       description: `Withdrawal to Telebirr ${wdr.telebirrPhone}`,
       idempotencyKey,
       createdAt: now,
@@ -622,14 +639,16 @@ export class WalletLedgerService {
    * Admin rejects withdrawal -> restores locked funds back to available balance
    */
   static async rejectWithdrawal(withdrawalId: string, adminId: string, reason: string) {
-    const idempotencyKey = `reject-wdr-${withdrawalId}`;
+    const cleanWithdrawalId = toCleanUuid(withdrawalId);
+    const cleanAdminId = toCleanUuid(adminId);
+    const idempotencyKey = `reject-wdr-${cleanWithdrawalId}`;
     const pool = getPool();
 
     if (pool) {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
-        const wdrRes = await client.query('SELECT * FROM withdrawals WHERE id = $1 FOR UPDATE', [withdrawalId]);
+        const wdrRes = await client.query('SELECT * FROM withdrawals WHERE id = $1 FOR UPDATE', [cleanWithdrawalId]);
         if (wdrRes.rows.length === 0) throw new Error('Withdrawal request not found');
         const wdr = wdrRes.rows[0];
 
@@ -639,7 +658,7 @@ export class WalletLedgerService {
         // Mark REJECTED
         await client.query(
           `UPDATE withdrawals SET status = 'REJECTED', reviewed_by = $1, reviewed_at = NOW(), rejection_reason = $2 WHERE id = $3`,
-          [adminId, reason, withdrawalId]
+          [cleanAdminId, reason, cleanWithdrawalId]
         );
 
         // Unlock funds back to available balance
@@ -653,7 +672,7 @@ export class WalletLedgerService {
           `INSERT INTO wallet_transactions 
            (user_id, amount, type, status, reference, admin_id, description, idempotency_key)
            VALUES ($1, $2, 'WITHDRAWAL_REFUND', 'COMPLETED', $3, $4, $5, $6)`,
-          [wdr.user_id, amount, `REJECT_${withdrawalId.slice(0, 8)}`, adminId, `Withdrawal rejected: ${reason}`, idempotencyKey]
+          [wdr.user_id, amount, `REJECT_${cleanWithdrawalId.slice(0, 8)}`, cleanAdminId, `Withdrawal rejected: ${reason}`, idempotencyKey]
         );
 
         await client.query('COMMIT');
@@ -667,12 +686,12 @@ export class WalletLedgerService {
     }
 
     // In-memory
-    const wdr = memDb.withdrawals.get(withdrawalId);
+    const wdr = memDb.withdrawals.get(cleanWithdrawalId) || memDb.withdrawals.get(withdrawalId);
     if (!wdr) throw new Error('Withdrawal request not found');
     if (wdr.status !== 'PENDING') throw new Error(`Withdrawal has already been ${wdr.status.toLowerCase()}`);
 
     wdr.status = 'REJECTED';
-    wdr.reviewedBy = adminId;
+    wdr.reviewedBy = cleanAdminId;
     wdr.reviewedAt = new Date().toISOString();
     wdr.rejectionReason = reason;
 
@@ -688,8 +707,8 @@ export class WalletLedgerService {
       amount: wdr.amount,
       type: 'WITHDRAWAL_REFUND',
       status: 'COMPLETED',
-      reference: `REJECT_${withdrawalId.slice(0, 8)}`,
-      adminId,
+      reference: `REJECT_${cleanWithdrawalId.slice(0, 8)}`,
+      adminId: cleanAdminId,
       description: `Withdrawal rejected: ${reason}`,
       idempotencyKey,
       createdAt: now,
@@ -712,6 +731,8 @@ export class WalletLedgerService {
       throw new Error('Invalid adjustment amount');
     }
 
+    const cleanUserId = toCleanUuid(userId);
+    const cleanAdminId = toCleanUuid(adminId);
     const pool = getPool();
     const now = new Date().toISOString();
 
@@ -721,15 +742,15 @@ export class WalletLedgerService {
         await client.query('BEGIN');
 
         // Check if wallet exists or initialize
-        let walletRes = await client.query('SELECT * FROM wallets WHERE user_id = $1 FOR UPDATE', [userId]);
+        let walletRes = await client.query('SELECT * FROM wallets WHERE user_id = $1 FOR UPDATE', [cleanUserId]);
         if (walletRes.rows.length === 0) {
           await client.query(
             `INSERT INTO wallets (user_id, available_balance, locked_balance, currency, created_at)
              VALUES ($1, 0.00, 0.00, 'ETB', NOW())
              ON CONFLICT (user_id) DO NOTHING`,
-            [userId]
+            [cleanUserId]
           );
-          walletRes = await client.query('SELECT * FROM wallets WHERE user_id = $1 FOR UPDATE', [userId]);
+          walletRes = await client.query('SELECT * FROM wallets WHERE user_id = $1 FOR UPDATE', [cleanUserId]);
         }
 
         const currentBalance = parseFloat(walletRes.rows[0].available_balance);
@@ -753,7 +774,7 @@ export class WalletLedgerService {
         // Update wallet
         await client.query(
           'UPDATE wallets SET available_balance = $1, updated_at = NOW() WHERE user_id = $2',
-          [newBalance, userId]
+          [newBalance, cleanUserId]
         );
 
         // Record audit transaction in immutable ledger
@@ -762,7 +783,7 @@ export class WalletLedgerService {
           `INSERT INTO wallet_transactions 
            (user_id, amount, type, status, reference, admin_id, description)
            VALUES ($1, $2, 'ADMIN_ADJUSTMENT', 'COMPLETED', $3, $4, $5)`,
-          [userId, diff, reference, adminId, reason || `Admin balance adjustment (${actionType})`]
+          [cleanUserId, diff, reference, cleanAdminId, reason || `Admin balance adjustment (${actionType})`]
         );
 
         await client.query('COMMIT');
@@ -776,7 +797,7 @@ export class WalletLedgerService {
     }
 
     // In-memory update
-    const wallet = await this.getWallet(userId);
+    const wallet = await this.getWallet(cleanUserId);
     const currentBalance = wallet.availableBalance;
     let newBalance = currentBalance;
     let diff = 0;
@@ -795,19 +816,19 @@ export class WalletLedgerService {
       newBalance = amount;
     }
 
-    this.updateMemWallet(userId, (w) => {
+    this.updateMemWallet(cleanUserId, (w) => {
       w.availableBalance = newBalance;
     });
 
     const reference = `ADJ_${Date.now().toString().slice(-6)}`;
     memDb.walletTransactions.push({
       id: `tx-${crypto.randomUUID()}`,
-      userId,
+      userId: cleanUserId,
       amount: diff,
       type: 'ADMIN_ADJUSTMENT',
       status: 'COMPLETED',
       reference,
-      adminId,
+      adminId: cleanAdminId,
       description: reason || `Admin balance adjustment (${actionType})`,
       createdAt: now,
     });

@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { memDb, getPool } from '../db';
+import { memDb, getPool, toCleanUuid } from '../db';
 import { AdminAuditLog } from '../../src/types';
 
 export class AuditService {
@@ -13,6 +13,7 @@ export class AuditService {
     ipAddress?: string
   ) {
     const id = crypto.randomUUID();
+    const cleanAdminId = toCleanUuid(adminId);
     const now = new Date().toISOString();
     const pool = getPool();
 
@@ -20,12 +21,12 @@ export class AuditService {
       await pool.query(
         `INSERT INTO admin_audit_logs (id, admin_id, action, target_type, target_id, details, ip_address, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
-        [id, adminId, action, targetType, targetId || null, details, ipAddress || null]
+        [id, cleanAdminId, action, targetType, targetId || null, details, ipAddress || null]
       );
     } else {
       const entry: AdminAuditLog = {
         id,
-        adminId,
+        adminId: cleanAdminId,
         adminName,
         action,
         targetType,

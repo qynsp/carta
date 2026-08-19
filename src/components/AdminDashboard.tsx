@@ -77,6 +77,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [isSubmittingBalance, setIsSubmittingBalance] = useState<boolean>(false);
   const [isSavingSettings, setIsSavingSettings] = useState<boolean>(false);
 
+  // User Profile Edit States (Name, Username, Role)
+  const [selectedUserForEdit, setSelectedUserForEdit] = useState<User | null>(null);
+  const [editUserFirstName, setEditUserFirstName] = useState<string>('');
+  const [editUserLastName, setEditUserLastName] = useState<string>('');
+  const [editUserUsername, setEditUserUsername] = useState<string>('');
+  const [editUserRole, setEditUserRole] = useState<'ADMIN' | 'OPERATOR' | 'PLAYER'>('PLAYER');
+  const [isSubmittingUserEdit, setIsSubmittingUserEdit] = useState<boolean>(false);
+  const [copiedTelebirr, setCopiedTelebirr] = useState<boolean>(false);
+
   const fetchMetrics = async () => {
     if (!token) return;
     try {
@@ -333,6 +342,44 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       alert(err.message || 'Balance adjustment error');
     } finally {
       setIsSubmittingBalance(false);
+    }
+  };
+
+  const handleEditUserSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!token || !selectedUserForEdit) return;
+    if (!editUserFirstName.trim()) {
+      alert('Please enter a valid first name');
+      return;
+    }
+
+    setIsSubmittingUserEdit(true);
+    try {
+      const res = await fetch(`/api/admin/users/${selectedUserForEdit.id}/update-profile`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          firstName: editUserFirstName.trim(),
+          lastName: editUserLastName.trim() || undefined,
+          username: editUserUsername.trim() || undefined,
+          role: editUserRole,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to update user profile');
+
+      setActionNotice(`User profile updated for ${editUserFirstName.trim()}!`);
+      setTimeout(() => setActionNotice(null), 3500);
+      setSelectedUserForEdit(null);
+      fetchTabContent();
+    } catch (err: any) {
+      alert(err.message || 'Error updating user profile');
+    } finally {
+      setIsSubmittingUserEdit(false);
     }
   };
 
@@ -688,6 +735,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           </div>
                         </div>
 
+                        {/* Edit Profile / Name Button */}
+                        <button
+                          onClick={() => {
+                            setSelectedUserForEdit(u);
+                            setEditUserFirstName(u.firstName || '');
+                            setEditUserLastName(u.lastName || '');
+                            setEditUserUsername(u.username || '');
+                            setEditUserRole((u.role as any) || 'PLAYER');
+                          }}
+                          className="px-2.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white font-bold text-xs flex items-center gap-1 cursor-pointer transition-colors"
+                          title="Edit User Name & Profile"
+                        >
+                          <Edit3 className="w-3.5 h-3.5 text-zinc-400" />
+                          <span>Edit</span>
+                        </button>
+
                         {/* Adjust Balance Button */}
                         <button
                           onClick={() => {
@@ -800,6 +863,35 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     className="w-full p-3 rounded-xl bg-zinc-900 border border-zinc-700 text-white font-bold text-sm focus:border-emerald-500 focus:outline-none"
                   />
                   <span className="text-[10px] text-zinc-500">Name shown next to the recipient phone number.</span>
+                </div>
+              </div>
+
+              {/* Live Preview Box */}
+              <div className="p-3.5 rounded-xl bg-zinc-900/90 border border-zinc-800 space-y-2">
+                <div className="flex items-center justify-between text-[10px] uppercase font-bold text-zinc-400">
+                  <span>Player Modal Live Preview</span>
+                  <span className="text-emerald-400 font-mono">Real-Time</span>
+                </div>
+                <div className="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800">
+                  <div>
+                    <p className="text-[10px] text-zinc-400 uppercase font-bold">Recipient Phone</p>
+                    <p className="font-mono font-black text-amber-400 text-sm">{settings.telebirrReceiverNumber || '0911223344'}</p>
+                    <p className="text-[10px] text-zinc-400">{settings.telebirrReceiverName || 'Pool Cards Addis'}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (settings.telebirrReceiverNumber) {
+                        navigator.clipboard.writeText(settings.telebirrReceiverNumber);
+                        setCopiedTelebirr(true);
+                        setTimeout(() => setCopiedTelebirr(false), 2000);
+                      }
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-zinc-950 font-black text-xs transition-all flex items-center gap-1 cursor-pointer"
+                  >
+                    {copiedTelebirr ? <CheckCircle className="w-3.5 h-3.5" /> : <Phone className="w-3.5 h-3.5" />}
+                    <span>{copiedTelebirr ? 'Copied' : 'Test Copy'}</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -1076,6 +1168,106 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   className="flex-1 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-black text-xs uppercase tracking-wider cursor-pointer shadow-lg disabled:opacity-50"
                 >
                   {isSubmittingBalance ? 'Applying...' : 'Confirm Adjustment'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* USER PROFILE & IDENTITY EDIT MODAL */}
+      {selectedUserForEdit && (
+        <div
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setSelectedUserForEdit(null);
+          }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-950/85 backdrop-blur-md animate-fadeIn"
+        >
+          <div className="w-full max-w-md bg-[#0f172a] border-2 border-emerald-500/40 rounded-3xl p-6 shadow-2xl text-white space-y-4">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-400">
+                  <Edit3 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white">Edit User Profile & Name</h3>
+                  <p className="text-xs text-zinc-400">
+                    ID: {selectedUserForEdit.id} • TG: {selectedUserForEdit.telegramId || 'Guest'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedUserForEdit(null)}
+                className="p-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleEditUserSubmit} className="space-y-4 text-xs">
+              <div className="space-y-1">
+                <label className="text-zinc-300 font-bold">First Name / Display Name *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Dawit"
+                  value={editUserFirstName}
+                  onChange={(e) => setEditUserFirstName(e.target.value)}
+                  className="w-full p-3 rounded-xl bg-zinc-950 border border-zinc-700 text-white font-bold text-xs focus:border-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-zinc-300 font-bold">Last Name</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Kebede"
+                  value={editUserLastName}
+                  onChange={(e) => setEditUserLastName(e.target.value)}
+                  className="w-full p-3 rounded-xl bg-zinc-950 border border-zinc-700 text-white font-bold text-xs focus:border-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-zinc-300 font-bold">Username (@handle)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. dawit_pool"
+                  value={editUserUsername}
+                  onChange={(e) => setEditUserUsername(e.target.value)}
+                  className="w-full p-3 rounded-xl bg-zinc-950 border border-zinc-700 text-white font-mono text-xs focus:border-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-zinc-300 font-bold">System Role</label>
+                <select
+                  value={editUserRole}
+                  onChange={(e) => setEditUserRole(e.target.value as any)}
+                  className="w-full p-3 rounded-xl bg-zinc-950 border border-zinc-700 text-white font-bold text-xs focus:border-emerald-500 focus:outline-none"
+                >
+                  <option value="PLAYER">PLAYER (Standard user)</option>
+                  <option value="OPERATOR">OPERATOR (Referee / Table host)</option>
+                  <option value="ADMIN">ADMIN (Full management access)</option>
+                </select>
+              </div>
+
+              {/* Submit Buttons */}
+              <div className="flex items-center gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedUserForEdit(null)}
+                  className="flex-1 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-xs cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingUserEdit}
+                  className="flex-1 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-black text-xs uppercase tracking-wider cursor-pointer shadow-lg disabled:opacity-50"
+                >
+                  {isSubmittingUserEdit ? 'Saving...' : 'Save Profile'}
                 </button>
               </div>
             </form>
