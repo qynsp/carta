@@ -23,12 +23,13 @@ export const CardHand: React.FC<CardHandProps> = ({
 }) => {
   const { t, language } = useLanguage();
 
-  // Animation dealing state
-  const [isDealing, setIsDealing] = useState<boolean>(true);
-  const [revealedCount, setRevealedCount] = useState<number>(0);
-  const [activeDealKey, setActiveDealKey] = useState<number>(1);
+  // Animation dealing state - default to false so cards are immediately visible if animation is not active
+  const [isDealing, setIsDealing] = useState<boolean>(false);
+  const [revealedCount, setRevealedCount] = useState<number>(cards.length);
+  const [activeDealKey, setActiveDealKey] = useState<number>(0);
   const [lastDrawnIndex, setLastDrawnIndex] = useState<number | null>(null);
 
+  const lastHandSignatureRef = useRef<string>('');
   const prevCardsLengthRef = useRef<number>(cards.length);
   const dealingTimersRef = useRef<NodeJS.Timeout[]>([]);
 
@@ -39,50 +40,95 @@ export const CardHand: React.FC<CardHandProps> = ({
   };
 
   // Trigger full card deal animation sequence
-  const startDealAnimation = () => {
+  const startDealAnimation = (handCards: CardValue[]) => {
     clearDealingTimers();
+
+    if (!handCards || handCards.length === 0) {
+      setIsDealing(false);
+      setRevealedCount(0);
+      return;
+    }
+
+    const total = handCards.length;
     setIsDealing(true);
     setRevealedCount(0);
     setLastDrawnIndex(null);
 
-    // Initial shuffle sound
-    soundFx.playDeckShuffle();
+    // Initial shuffle riffle sound
+    try {
+      soundFx.playDeckShuffle();
+    } catch {
+      // Audio fallback
+    }
 
-    // Staggered reveal for each card
-    const cardDelay = 260; // ms per card
-    cards.forEach((_, idx) => {
+    // Staggered reveal for each card (snappy 130ms cadence)
+    const cardDelay = 130;
+    for (let idx = 0; idx < total; idx++) {
+      const currentIdx = idx;
       const timer = setTimeout(() => {
-        setRevealedCount((prev) => Math.max(prev, idx + 1));
-        soundFx.playCardDraw(idx);
-      }, (idx + 1) * cardDelay);
+        setRevealedCount((prev) => Math.max(prev, currentIdx + 1));
+        try {
+          soundFx.playCardDraw(currentIdx);
+        } catch {
+          // Audio fallback
+        }
+      }, (currentIdx + 1) * cardDelay);
       dealingTimersRef.current.push(timer);
-    });
+    }
 
-    // Finalize deal state
+    // Finalize deal state safely
+    const totalDuration = (total + 1) * cardDelay + 100;
     const endTimer = setTimeout(() => {
       setIsDealing(false);
-      setRevealedCount(cards.length);
-      soundFx.playCardFlip();
-    }, (cards.length + 1) * cardDelay + 150);
+      setRevealedCount(total);
+      try {
+        soundFx.playCardFlip();
+      } catch {
+        // Audio fallback
+      }
+    }, totalDuration);
     dealingTimersRef.current.push(endTimer);
   };
 
-  // Run deal animation on initial mount or when user restarts match
+  // Trigger deal animation whenever a new hand of cards is populated or deal key increments
   useEffect(() => {
     if (cards.length > 0) {
-      startDealAnimation();
+      const currentSig = `${activeDealKey}-${cards.slice().sort().join(',')}`;
+      if (currentSig !== lastHandSignatureRef.current) {
+        lastHandSignatureRef.current = currentSig;
+        startDealAnimation(cards);
+      }
+    } else {
+      setIsDealing(false);
+      setRevealedCount(0);
     }
+
     return () => clearDealingTimers();
-  }, [activeDealKey]);
+  }, [cards, activeDealKey]);
+
+  // Safety watchdog: ensure isDealing never gets stuck for more than 1.5 seconds
+  useEffect(() => {
+    if (isDealing) {
+      const watchdog = setTimeout(() => {
+        setIsDealing(false);
+        setRevealedCount(cards.length);
+      }, Math.max(cards.length * 150 + 300, 1200));
+      return () => clearTimeout(watchdog);
+    }
+  }, [isDealing, cards.length]);
 
   // Detect mid-game card additions (e.g. scratch penalty card)
   useEffect(() => {
     if (cards.length > prevCardsLengthRef.current && prevCardsLengthRef.current > 0 && !isDealing) {
-      // New card drawn
+      // New single penalty card drawn
       const newCardIdx = cards.length - 1;
       setLastDrawnIndex(newCardIdx);
       setRevealedCount(cards.length);
-      soundFx.playCardDraw(newCardIdx);
+      try {
+        soundFx.playCardDraw(newCardIdx);
+      } catch {
+        // Audio fallback
+      }
 
       const t = setTimeout(() => {
         setLastDrawnIndex(null);
@@ -95,9 +141,13 @@ export const CardHand: React.FC<CardHandProps> = ({
   // Play audio sound when it turns into player's turn or wins
   useEffect(() => {
     if (isWinner) {
-      soundFx.playWinnerFanfare();
+      try {
+        soundFx.playWinnerFanfare();
+      } catch {}
     } else if (isMyTurn && !isGameOver && !isDealing) {
-      soundFx.playYourTurn();
+      try {
+        soundFx.playYourTurn();
+      } catch {}
     }
   }, [isMyTurn, isWinner, isGameOver, isDealing]);
 
@@ -105,7 +155,9 @@ export const CardHand: React.FC<CardHandProps> = ({
     clearDealingTimers();
     setIsDealing(false);
     setRevealedCount(cards.length);
-    soundFx.playCardFlip();
+    try {
+      soundFx.playCardFlip();
+    } catch {}
   };
 
   const handleReplayDeal = () => {
@@ -214,14 +266,14 @@ export const CardHand: React.FC<CardHandProps> = ({
       {/* Dealing Active Banner & Deck Representation */}
       {isDealing ? (
         <motion.div
-          initial={{ opacity: 0, y: -10 }}
+          initial={{ opacity: 0, y: -6 }}
           animate={{ opacity: 1, y: 0 }}
           className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-950/80 via-zinc-900 to-amber-950/80 border-2 border-amber-500/50 shadow-xl flex items-center justify-between gap-3"
         >
           <div className="flex items-center gap-3">
             <motion.div
               animate={{ rotateY: [0, 180, 360] }}
-              transition={{ repeat: Infinity, duration: 1.5, ease: 'easeInOut' }}
+              transition={{ repeat: Infinity, duration: 1.2, ease: 'easeInOut' }}
               className="w-9 h-12 rounded-lg bg-gradient-to-br from-amber-600 to-amber-800 border-2 border-amber-300 shadow-md flex items-center justify-center text-xs font-black text-zinc-950"
             >
               🎱
@@ -230,7 +282,7 @@ export const CardHand: React.FC<CardHandProps> = ({
               <p className="text-xs sm:text-sm font-black text-amber-300 flex items-center gap-2">
                 <span>{t('dealingCards')}</span>
                 <span className="font-mono text-xs bg-amber-950 px-2 py-0.5 rounded-lg border border-amber-500/40">
-                  {revealedCount}/{cards.length}
+                  {Math.min(revealedCount, cards.length)}/{cards.length}
                 </span>
               </p>
               <p className="text-[11px] text-zinc-400">
@@ -292,10 +344,10 @@ export const CardHand: React.FC<CardHandProps> = ({
                 key={`card-deal-${activeDealKey}-${index}-${cardVal}`}
                 initial={{
                   opacity: 0,
-                  y: -70,
-                  x: -20,
-                  scale: 0.7,
-                  rotateZ: -12 + (index % 3) * 8,
+                  y: -50,
+                  x: -15,
+                  scale: 0.8,
+                  rotateZ: -8 + (index % 3) * 6,
                 }}
                 animate={{
                   opacity: 1,
@@ -307,10 +359,10 @@ export const CardHand: React.FC<CardHandProps> = ({
                 exit={{ scale: 0.4, opacity: 0, y: -30 }}
                 whileHover={isRevealed ? { y: -8, scale: 1.05 } : {}}
                 transition={{
-                  duration: 0.4,
-                  delay: isDealing ? index * 0.12 : 0,
+                  duration: 0.35,
+                  delay: isDealing ? index * 0.08 : 0,
                   type: 'spring',
-                  stiffness: 260,
+                  stiffness: 280,
                   damping: 22,
                 }}
                 className={`relative shrink-0 w-28 h-44 sm:w-32 sm:h-48 select-none transition-shadow ${
@@ -320,7 +372,9 @@ export const CardHand: React.FC<CardHandProps> = ({
                 }`}
                 style={{ transformStyle: 'preserve-3d' }}
                 onClick={() => {
-                  if (isMyTurn && onCardClick && !isGameOver && isRevealed) {
+                  if (isDealing) {
+                    handleSkipDeal();
+                  } else if (isMyTurn && onCardClick && !isGameOver && isRevealed) {
                     onCardClick(cardVal);
                   }
                 }}
@@ -330,7 +384,7 @@ export const CardHand: React.FC<CardHandProps> = ({
                   className="w-full h-full relative rounded-2xl"
                   style={{ transformStyle: 'preserve-3d' }}
                   animate={{ rotateY: isRevealed ? 0 : 180 }}
-                  transition={{ duration: 0.5, ease: 'easeOut' }}
+                  transition={{ duration: 0.4, ease: 'easeOut' }}
                 >
                   {/* FRONT FACE (Pool Ball & Rank Info) */}
                   <div
