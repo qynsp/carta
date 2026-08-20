@@ -21,6 +21,15 @@ export const DICTIONARY: Translations = {
   rules: { en: 'Rules', am: 'ህግጋት' },
   soundOn: { en: 'Sound On', am: 'ድምፅ በርቷል' },
   soundOff: { en: 'Sound Muted', am: 'ድምፅ ጠፍቷል' },
+  xpProgress: { en: 'XP PROGRESS', am: 'የልምድ ነጥብ (XP)' },
+  winStreak: { en: 'STREAK', am: 'የተከታታይ ድል' },
+
+  // Level Titles
+  levelRookie: { en: 'Rookie', am: 'ጀማሪ ተጫዋች' },
+  levelClubPlayer: { en: 'Club Player', am: 'የክለብ ተጫዋች 🎱' },
+  levelHustler: { en: 'Hustler 🎱', am: 'ብልህ አጥቂ 🎱' },
+  levelCueShark: { en: 'Cue Shark 🦈', am: 'የፑል ሻርክ 🦈' },
+  levelGrandmaster: { en: 'Grandmaster 👑', am: 'የጠረጴዛው ንጉሥ 👑' },
 
   // Game Lobby & Actions
   activeGames: { en: 'Pool Tables', am: 'የፑል ጠረጴዛዎች' },
@@ -32,6 +41,9 @@ export const DICTIONARY: Translations = {
   prizePot: { en: 'Winner Gets', am: 'የአሸናፊ ሽልማት' },
   players: { en: 'Players', am: 'ተጫዋቾች' },
   table: { en: 'Table', am: 'ጠረጴዛ' },
+  openTables: { en: 'Open Tables', am: 'ክፍት ጠረጴዛዎች' },
+  noActiveTables: { en: 'No active tables at the moment', am: 'በአሁኑ ሰዓት ክፍት ጠረጴዛ የለም' },
+  createFirstTable: { en: 'Create First Table', am: 'የመጀመሪያውን ጠረጴዛ ክፈት' },
 
   // In-Game
   yourTurn: { en: '🟢 YOUR TURN! SHOOT NOW!', am: '🟢 ተራህ ነው! አሁን ምታ!' },
@@ -88,6 +100,26 @@ export const DICTIONARY: Translations = {
   submitDeposit: { en: 'Confirm Deposit', am: 'ገንዘብ ማስገባቱን አረጋግጥ' },
   submitWithdraw: { en: 'Send Money to My Telebirr', am: 'ገንዘቡን ወደ ቴሌብሬ ላክ' },
   depositNote: { en: 'Send money to Telebirr, then type the SMS code here. Admin will credit your account instantly.', am: 'ቴሌብር ላይ ብር ይላኩና የደረሰዎትን ኮድ እዚህ ይፃፉ። ፈጥኖ ወደ አካውንትዎ ይገባል።' },
+  recentTransactions: { en: 'Recent Transactions', am: 'የቅርብ ጊዜ የገንዘብ ዝውውሮች' },
+  noTransactions: { en: 'No transactions yet', am: 'ምንም የገንዘብ ዝውውር የለም' },
+
+  // Profile & Stats
+  myStats: { en: 'My Stats', am: 'የእኔ ውጤቶች' },
+  totalGames: { en: 'Total Games', am: 'የተጫወቱት ጨዋታ' },
+  gamesWon: { en: 'Games Won', am: 'ያሸነፉት ጨዋታ' },
+  winRate: { en: 'Win Rate', am: 'የማሸነፍ መጠን' },
+  totalEarned: { en: 'Total Earned', am: 'ያገኙት ጠቅላላ ገቢ' },
+  editProfile: { en: 'Edit Profile', am: 'ፕሮፋይል አስተካክል' },
+  saveProfile: { en: 'Save Name', am: 'ስምህን መዝግብ' },
+  fullName: { en: 'Full Name / Nickname', am: 'ሙሉ ስም / ቅጽል ስም' },
+  username: { en: 'Telegram Username', am: 'ቴሌግራም ዩዘርኔም' },
+
+  // Leaderboard
+  rank: { en: 'Rank', am: 'ደረጃ' },
+  player: { en: 'Player', am: 'ተጫዋች' },
+  wins: { en: 'Wins', am: 'ድሎች' },
+  earnings: { en: 'Winnings', am: 'ያሸነፈው' },
+  topPlayers: { en: 'Top Champions', am: 'የሳምንቱ ምርጥ ተጫዋቾች' },
 
   // Rules
   howToPlay: { en: 'How to Play (Very Easy!)', am: 'አጨዋወት (በጣም ቀላል!)' },
@@ -105,7 +137,7 @@ interface LanguageContextType {
 }
 
 const LanguageContext = createContext<LanguageContextType>({
-  language: 'en',
+  language: 'am',
   setLanguage: () => {},
   t: (key: string) => key,
 });
@@ -113,7 +145,7 @@ const LanguageContext = createContext<LanguageContextType>({
 export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [language, setLanguageState] = useState<Language>(() => {
     const saved = localStorage.getItem('pool_lang');
-    return (saved === 'am' || saved === 'en') ? saved : 'en';
+    return (saved === 'am' || saved === 'en') ? saved : 'am';
   });
 
   const setLanguage = (lang: Language) => {
@@ -123,7 +155,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const t = (key: string): string => {
     if (DICTIONARY[key]) {
-      return DICTIONARY[key][language] || DICTIONARY[key].en;
+      return DICTIONARY[key][language] || DICTIONARY[key].am || DICTIONARY[key].en;
     }
     return key;
   };

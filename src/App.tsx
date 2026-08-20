@@ -88,8 +88,9 @@ function MainAppContent({ onNavigateAdmin }: { onNavigateAdmin: () => void }) {
 
   const playerLevel = Math.floor(playerXp / 150) + 1;
   const currentLevelXp = playerXp % 150;
-  const levelTitles = ['Rookie', 'Club Player', 'Hustler 🎱', 'Cue Shark 🦈', 'Grandmaster 👑'];
-  const currentTitle = levelTitles[Math.min(playerLevel - 1, levelTitles.length - 1)];
+  const levelTitleKeys = ['levelRookie', 'levelClubPlayer', 'levelHustler', 'levelCueShark', 'levelGrandmaster'];
+  const currentTitleKey = levelTitleKeys[Math.min(playerLevel - 1, levelTitleKeys.length - 1)];
+  const currentTitle = t(currentTitleKey);
 
   const toggleMute = () => {
     soundFx.playButtonClick();
