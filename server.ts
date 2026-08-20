@@ -9,7 +9,7 @@ import { setupWebSocket } from './server/ws';
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   // Initialize Database (Neon PostgreSQL if DATABASE_URL configured or in-memory fallback)
   await initDatabase();
