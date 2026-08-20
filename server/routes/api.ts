@@ -221,6 +221,38 @@ apiRouter.post('/games/:id/join', requireAuth, async (req: AuthRequest, res: Res
   }
 });
 
+// Toggle player ready status in waiting lobby
+apiRouter.post('/games/:id/ready', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const { isReady } = req.body;
+    const result = await GameEngineService.togglePlayerReady(
+      req.params.id,
+      req.user!.userId,
+      isReady !== undefined ? Boolean(isReady) : undefined
+    );
+    const game = await GameEngineService.getPublicGameState(req.params.id);
+    return res.json({ success: true, ...result, game });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message });
+  }
+});
+
+// Vote to disband and refund match (ይፍረስ)
+apiRouter.post('/games/:id/disband-vote', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const { vote } = req.body;
+    const result = await GameEngineService.toggleDisbandVote(
+      req.params.id,
+      req.user!.userId,
+      vote !== undefined ? Boolean(vote) : undefined
+    );
+    const game = await GameEngineService.getPublicGameState(req.params.id);
+    return res.json({ success: true, ...result, game });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message });
+  }
+});
+
 // Get PRIVATE Game State (Public state + ONLY calling user's unremoved cards)
 apiRouter.get('/games/:id/private-state', requireAuth, async (req: AuthRequest, res: Response) => {
   try {

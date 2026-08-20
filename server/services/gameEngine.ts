@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { memDb, getPool, DBGame, DBGamePlayer, DBPlayerCard, DBGameEvent, toCleanUuid } from '../db';
-import { CardValue, GameStatus, GamePublicState, GamePrivateState, GameEventPublic, GamePlayerSummary } from '../../src/types';
+import { CardValue, GameStatus, GamePublicState, GamePrivateState, GameEventPublic, GamePlayerSummary, GameEventType } from '../../src/types';
 import { WalletLedgerService } from './walletLedger';
 
 export type BroadcastCallback = (gameId: string, eventType: string, payload?: any) => void;
@@ -74,8 +74,8 @@ export class GameEngineService {
 
         // Add creator as player 0
         await client.query(
-          `INSERT INTO game_players (game_id, user_id, turn_order, is_winner, joined_at)
-           VALUES ($1, $2, 0, FALSE, NOW())`,
+          `INSERT INTO game_players (game_id, user_id, turn_order, is_winner, is_ready, joined_at)
+           VALUES ($1, $2, 0, FALSE, FALSE, NOW())`,
           [gameId, cleanCreatorId]
         );
 
@@ -117,6 +117,7 @@ export class GameEngineService {
         userId: cleanCreatorId,
         turnOrder: 0,
         isWinner: false,
+        isReady: false,
         joinedAt: now,
       });
 
@@ -176,8 +177,8 @@ export class GameEngineService {
         const newWinnerPayout = newTotalPot - (newTotalPot * feePercent) / 100;
 
         await client.query(
-          `INSERT INTO game_players (game_id, user_id, turn_order, is_winner, joined_at)
-           VALUES ($1, $2, $3, FALSE, NOW())`,
+          `INSERT INTO game_players (game_id, user_id, turn_order, is_winner, is_ready, joined_at)
+           VALUES ($1, $2, $3, FALSE, FALSE, NOW())`,
           [cleanGameId, cleanUserId, turnOrder]
         );
 
@@ -234,6 +235,7 @@ export class GameEngineService {
         userId: cleanUserId,
         turnOrder,
         isWinner: false,
+        isReady: false,
         joinedAt: now,
       });
 
@@ -252,7 +254,309 @@ export class GameEngineService {
   }
 
   /**
-   * Start an open match (when 2+ players are ready at the table)
+   * Toggle or set a player's READY status in the waiting lobby
+   */
+  static async togglePlayerReady(
+    gameId: string,
+    userId: string,
+    explicitReady?: boolean
+  ): Promise<{ isReady: boolean; allReady: boolean; readyCount: number; totalCount: number }> {
+    const pool = getPool();
+    const cleanGameId = toCleanUuid(gameId);
+    const cleanUserId = toCleanUuid(userId);
+    const now = new Date().toISOString();
+
+    let isReady = false;
+    let allReady = false;
+    let readyCount = 0;
+    let totalCount = 0;
+
+    if (pool) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        const gameRes = await client.query('SELECT * FROM games WHERE id = $1 FOR UPDATE', [cleanGameId]);
+        if (gameRes.rows.length === 0) throw new Error('Game not found');
+        const game = gameRes.rows[0];
+
+        if (game.status !== 'WAITING') {
+          throw new Error('Ready status can only be toggled in the waiting lobby');
+        }
+
+        const playerRes = await client.query(
+          'SELECT * FROM game_players WHERE game_id = $1 AND user_id = $2 FOR UPDATE',
+          [cleanGameId, cleanUserId]
+        );
+        if (playerRes.rows.length === 0) {
+          throw new Error('You must join the table first before marking ready');
+        }
+
+        const currentPlayer = playerRes.rows[0];
+        isReady = explicitReady !== undefined ? Boolean(explicitReady) : !currentPlayer.is_ready;
+
+        await client.query(
+          'UPDATE game_players SET is_ready = $1 WHERE game_id = $2 AND user_id = $3',
+          [isReady, cleanGameId, cleanUserId]
+        );
+
+        const allPlayersRes = await client.query(
+          'SELECT is_ready FROM game_players WHERE game_id = $1',
+          [cleanGameId]
+        );
+        totalCount = allPlayersRes.rows.length;
+        readyCount = allPlayersRes.rows.filter((p: any) => Boolean(p.is_ready)).length;
+        allReady = totalCount >= 2 && readyCount === totalCount;
+
+        const userRes = await client.query('SELECT first_name, username FROM users WHERE id = $1', [cleanUserId]);
+        const userName = userRes.rows[0]?.first_name || userRes.rows[0]?.username || 'Player';
+
+        const eventType: GameEventType = isReady ? 'PLAYER_READY' : 'PLAYER_NOT_READY';
+        const msg = isReady
+          ? `🟢 ${userName} is READY! (${readyCount}/${totalCount} ready)`
+          : `⏳ ${userName} is NOT ready (${readyCount}/${totalCount} ready)`;
+
+        await client.query(
+          `INSERT INTO game_events (game_id, type, user_id, message, created_at)
+           VALUES ($1, $2, $3, $4, NOW())`,
+          [cleanGameId, eventType, cleanUserId, msg]
+        );
+
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+    } else {
+      // In-memory
+      const game = memDb.games.get(cleanGameId) || memDb.games.get(gameId);
+      if (!game) throw new Error('Game not found');
+      if (game.status !== 'WAITING') {
+        throw new Error('Ready status can only be toggled in the waiting lobby');
+      }
+
+      const player = memDb.gamePlayers.find(
+        (p) => (p.gameId === cleanGameId || p.gameId === game.id) && (p.userId === cleanUserId || p.userId === userId)
+      );
+      if (!player) {
+        throw new Error('You must join the table first before marking ready');
+      }
+
+      isReady = explicitReady !== undefined ? Boolean(explicitReady) : !player.isReady;
+      player.isReady = isReady;
+
+      const allPlayers = memDb.gamePlayers.filter((p) => p.gameId === game.id || p.gameId === cleanGameId);
+      totalCount = allPlayers.length;
+      readyCount = allPlayers.filter((p) => Boolean(p.isReady)).length;
+      allReady = totalCount >= 2 && readyCount === totalCount;
+
+      const user = memDb.users.get(cleanUserId) || memDb.users.get(userId);
+      const userName = user?.firstName || user?.username || 'Player';
+
+      const eventType: GameEventType = isReady ? 'PLAYER_READY' : 'PLAYER_NOT_READY';
+      const msg = isReady
+        ? `🟢 ${userName} is READY! (${readyCount}/${totalCount} ready)`
+        : `⏳ ${userName} is NOT ready (${readyCount}/${totalCount} ready)`;
+
+      memDb.gameEvents.push({
+        id: `ge-${crypto.randomUUID()}`,
+        gameId: game.id,
+        type: eventType,
+        userId: cleanUserId,
+        message: msg,
+        createdAt: now,
+      });
+    }
+
+    if (broadcastFn) broadcastFn(cleanGameId, 'GAME_UPDATED');
+    return { isReady, allReady, readyCount, totalCount };
+  }
+
+  /**
+   * Vote to disband the game and receive a full refund (ይፍረስ)
+   * If all active joined players in the match vote yes, the game is immediately disbanded
+   * and 100% of entry fees are refunded to all players' wallets.
+   */
+  static async toggleDisbandVote(
+    gameId: string,
+    userId: string,
+    explicitVote?: boolean
+  ): Promise<{
+    disbanded: boolean;
+    voted: boolean;
+    votedCount: number;
+    totalCount: number;
+  }> {
+    const pool = getPool();
+    const cleanGameId = toCleanUuid(gameId);
+    const cleanUserId = toCleanUuid(userId);
+    const now = new Date().toISOString();
+
+    let isVoted = false;
+    let votedCount = 0;
+    let totalCount = 0;
+    let disbanded = false;
+
+    if (pool) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        const gameRes = await client.query('SELECT * FROM games WHERE id = $1 FOR UPDATE', [cleanGameId]);
+        if (gameRes.rows.length === 0) throw new Error('Game not found');
+        const game = gameRes.rows[0];
+
+        if (game.status === 'COMPLETED' || game.status === 'CANCELLED') {
+          throw new Error(`Game cannot be disbanded because it is already ${game.status.toLowerCase()}`);
+        }
+
+        const playerRes = await client.query(
+          'SELECT * FROM game_players WHERE game_id = $1 AND user_id = $2 FOR UPDATE',
+          [cleanGameId, cleanUserId]
+        );
+        if (playerRes.rows.length === 0) {
+          throw new Error('You must be a joined player in this match to vote for disband');
+        }
+
+        const currentPlayer = playerRes.rows[0];
+        isVoted = explicitVote !== undefined ? Boolean(explicitVote) : !currentPlayer.voted_disband;
+
+        await client.query(
+          'UPDATE game_players SET voted_disband = $1 WHERE game_id = $2 AND user_id = $3',
+          [isVoted, cleanGameId, cleanUserId]
+        );
+
+        const allPlayersRes = await client.query(
+          'SELECT user_id, voted_disband FROM game_players WHERE game_id = $1',
+          [cleanGameId]
+        );
+        totalCount = allPlayersRes.rows.length;
+        votedCount = allPlayersRes.rows.filter((p: any) => Boolean(p.voted_disband)).length;
+
+        const userRes = await client.query('SELECT first_name, username FROM users WHERE id = $1', [cleanUserId]);
+        const userName = userRes.rows[0]?.first_name || userRes.rows[0]?.username || 'Player';
+
+        // Check if unanimous agreement reached (100% of joined players)
+        if (totalCount > 0 && votedCount === totalCount) {
+          disbanded = true;
+          const entryFee = parseFloat(game.entry_fee);
+
+          // Refund all players 100% of their entry fee
+          if (entryFee > 0) {
+            for (const p of allPlayersRes.rows) {
+              await WalletLedgerService.refundGameEntry(
+                p.user_id,
+                cleanGameId,
+                entryFee,
+                'Unanimous agreement of all players to disband (ይፍረስ)'
+              );
+            }
+          }
+
+          await client.query(`UPDATE games SET status = 'CANCELLED', completed_at = NOW() WHERE id = $1`, [cleanGameId]);
+
+          const disbandMsg = `❌ Game disbanded by unanimous agreement of all players (ይፍረስ). All ${totalCount} player(s) received a full refund of ${entryFee} ETB.`;
+
+          await client.query(
+            `INSERT INTO game_events (game_id, type, user_id, message, created_at)
+             VALUES ($1, 'GAME_CANCELLED', $2, $3, NOW())`,
+            [cleanGameId, cleanUserId, disbandMsg]
+          );
+        } else {
+          // Vote recorded but not yet unanimous
+          const voteMsg = isVoted
+            ? `⚠️ ${userName} voted to disband & refund the game (ይፍረስ) [${votedCount}/${totalCount} votes].`
+            : `ℹ️ ${userName} cancelled their disband vote [${votedCount}/${totalCount} votes].`;
+
+          await client.query(
+            `INSERT INTO game_events (game_id, type, user_id, message, created_at)
+             VALUES ($1, 'DISBAND_VOTE', $2, $3, NOW())`,
+            [cleanGameId, cleanUserId, voteMsg]
+          );
+        }
+
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+    } else {
+      // In-memory
+      const game = memDb.games.get(cleanGameId) || memDb.games.get(gameId);
+      if (!game) throw new Error('Game not found');
+      if (game.status === 'COMPLETED' || game.status === 'CANCELLED') {
+        throw new Error(`Game cannot be disbanded because it is already ${game.status.toLowerCase()}`);
+      }
+
+      const player = memDb.gamePlayers.find(
+        (p) => (p.gameId === cleanGameId || p.gameId === game.id) && (p.userId === cleanUserId || p.userId === userId)
+      );
+      if (!player) {
+        throw new Error('You must be a joined player in this match to vote for disband');
+      }
+
+      isVoted = explicitVote !== undefined ? Boolean(explicitVote) : !player.votedDisband;
+      player.votedDisband = isVoted;
+
+      const allPlayers = memDb.gamePlayers.filter((p) => p.gameId === game.id || p.gameId === cleanGameId);
+      totalCount = allPlayers.length;
+      votedCount = allPlayers.filter((p) => Boolean(p.votedDisband)).length;
+
+      const user = memDb.users.get(cleanUserId) || memDb.users.get(userId);
+      const userName = user?.firstName || user?.username || 'Player';
+
+      if (totalCount > 0 && votedCount === totalCount) {
+        disbanded = true;
+        if (game.entryFee > 0) {
+          for (const p of allPlayers) {
+            await WalletLedgerService.refundGameEntry(
+              p.userId,
+              game.id,
+              game.entryFee,
+              'Unanimous agreement of all players to disband (ይፍረስ)'
+            );
+          }
+        }
+
+        game.status = 'CANCELLED';
+        game.completedAt = new Date().toISOString();
+
+        const disbandMsg = `❌ Game disbanded by unanimous agreement of all players (ይፍረስ). All ${totalCount} player(s) received a full refund of ${game.entryFee} ETB.`;
+
+        memDb.gameEvents.push({
+          id: `ge-${crypto.randomUUID()}`,
+          gameId: game.id,
+          type: 'GAME_CANCELLED',
+          userId: cleanUserId,
+          message: disbandMsg,
+          createdAt: now,
+        });
+      } else {
+        const voteMsg = isVoted
+          ? `⚠️ ${userName} voted to disband & refund the game (ይፍረስ) [${votedCount}/${totalCount} votes].`
+          : `ℹ️ ${userName} cancelled their disband vote [${votedCount}/${totalCount} votes].`;
+
+        memDb.gameEvents.push({
+          id: `ge-${crypto.randomUUID()}`,
+          gameId: game.id,
+          type: 'DISBAND_VOTE',
+          userId: cleanUserId,
+          message: voteMsg,
+          createdAt: now,
+        });
+      }
+    }
+
+    if (broadcastFn) broadcastFn(cleanGameId, 'GAME_UPDATED');
+    return { disbanded, voted: isVoted, votedCount, totalCount };
+  }
+
+  /**
+   * Start an open match (when 2+ players are joined AND ALL players are READY)
    */
   static async startGame(gameId: string, initiatorUserId: string): Promise<boolean> {
     const pool = getPool();
@@ -276,6 +580,13 @@ export class GameEngineService {
 
         if (players.length < 2) {
           throw new Error('At least 2 players are needed to start the pool match');
+        }
+
+        // ENFORCE: All joined players must be ready!
+        const unreadyPlayers = players.filter((p: any) => !p.is_ready);
+        if (unreadyPlayers.length > 0) {
+          const readyCount = players.length - unreadyPlayers.length;
+          throw new Error(`Cannot start game: All joined players must tap Ready first (${readyCount}/${players.length} ready)`);
         }
 
         // START GAME & DEAL 5 CARDS TO EACH PLAYER
@@ -320,6 +631,13 @@ export class GameEngineService {
       const players = memDb.gamePlayers.filter((p) => p.gameId === game.id).sort((a, b) => a.turnOrder - b.turnOrder);
       if (players.length < 2) {
         throw new Error('At least 2 players are needed to start the pool match');
+      }
+
+      // ENFORCE: All joined players must be ready!
+      const unreadyPlayers = players.filter((p) => !p.isReady);
+      if (unreadyPlayers.length > 0) {
+        const readyCount = players.length - unreadyPlayers.length;
+        throw new Error(`Cannot start game: All joined players must tap Ready first (${readyCount}/${players.length} ready)`);
       }
 
       game.status = 'ACTIVE';
@@ -525,14 +843,9 @@ export class GameEngineService {
               );
             }
           } else {
-            // Ball 14 or 15 (Normal balls, no card match)
-            outcome = 'NON_MATCH_SUNK';
-            await client.query(
-              `UPDATE games SET current_turn_user_id = $1, current_turn_index = $2 WHERE id = $3`,
-              [nextTurnUserId, nextTurnIndex, cleanGameId]
-            );
-
-            message = `🎱 ${playerName} sank the ${ballNumber}-ball. Turn passes to ${nextPlayerName}.`;
+            // Ball 14 or 15 (Neutral balls: no card match, shooter keeps shooting!)
+            outcome = 'MATCH_SUNK';
+            message = `🎱 ${playerName} sank neutral ${ballNumber}-ball! Turn continues.`;
             await client.query(
               `INSERT INTO game_events (game_id, type, user_id, ball_number, message, created_at)
                VALUES ($1, 'BALL_SUNK', $2, $3, $4, NOW())`,
@@ -703,12 +1016,9 @@ export class GameEngineService {
           });
         }
       } else {
-        // Ball 14 or 15 (normal pool balls, no card value)
-        outcome = 'NON_MATCH_SUNK';
-        game.currentTurnUserId = nextTurnUserId;
-        game.currentTurnIndex = nextTurnIndex;
-
-        message = `🎱 ${playerName} sank the ${ballNumber}-ball. Turn passes to ${nextPlayerName}.`;
+        // Ball 14 or 15 (Neutral balls: no card match, shooter keeps shooting!)
+        outcome = 'MATCH_SUNK';
+        message = `🎱 ${playerName} sank neutral ${ballNumber}-ball! Turn continues.`;
         memDb.gameEvents.push({
           id: `ge-${crypto.randomUUID()}`,
           gameId: game.id,
@@ -818,7 +1128,7 @@ export class GameEngineService {
 
       const playersRes = await pool.query(
         `SELECT gp.user_id as "userId", gp.turn_order as "turnOrder", gp.joined_at as "joinedAt", gp.is_winner as "isWinner",
-                u.username, u.first_name as "firstName"
+                gp.is_ready as "isReady", gp.voted_disband as "votedDisband", u.username, u.first_name as "firstName"
          FROM game_players gp
          JOIN users u ON gp.user_id = u.id
          WHERE gp.game_id = $1
@@ -844,6 +1154,12 @@ export class GameEngineService {
       const lastEventRes = await pool.query(
         `SELECT id, game_id as "gameId", type, user_id as "userId", ball_number as "ballNumber", message, created_at as "createdAt"
          FROM game_events WHERE game_id = $1 ORDER BY created_at DESC LIMIT 1`,
+        [cleanGameId]
+      );
+
+      const recentEventsRes = await pool.query(
+        `SELECT id, game_id as "gameId", type, user_id as "userId", ball_number as "ballNumber", message, created_at as "createdAt"
+         FROM game_events WHERE game_id = $1 ORDER BY created_at DESC LIMIT 8`,
         [cleanGameId]
       );
 
@@ -876,6 +1192,7 @@ export class GameEngineService {
         players: playersRes.rows,
         sunkBalls,
         lastEvent: lastEventRes.rows[0],
+        recentEvents: recentEventsRes.rows,
         tableNumber: g.table_number,
       };
     }
@@ -897,6 +1214,8 @@ export class GameEngineService {
         turnOrder: p.turnOrder,
         joinedAt: p.joinedAt,
         isWinner: p.isWinner,
+        isReady: Boolean(p.isReady),
+        votedDisband: Boolean(p.votedDisband),
       };
     });
 
@@ -928,6 +1247,16 @@ export class GameEngineService {
         }
       : undefined;
 
+    const recentEvents = events.slice(0, 8).map((e) => ({
+      id: e.id,
+      gameId: e.gameId,
+      type: e.type,
+      userId: e.userId,
+      ballNumber: e.ballNumber,
+      message: e.message,
+      createdAt: e.createdAt,
+    }));
+
     return {
       id: g.id,
       name: g.name,
@@ -951,6 +1280,7 @@ export class GameEngineService {
       players,
       sunkBalls,
       lastEvent,
+      recentEvents,
       tableNumber: g.tableNumber,
     };
   }

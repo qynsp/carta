@@ -7,6 +7,7 @@ interface PoolBallProps {
   isSelected?: boolean;
   onClick?: () => void;
   disabled?: boolean;
+  className?: string;
 }
 
 export const PoolBall: React.FC<PoolBallProps> = ({
@@ -15,6 +16,7 @@ export const PoolBall: React.FC<PoolBallProps> = ({
   isSelected = false,
   onClick,
   disabled = false,
+  className = '',
 }) => {
   const ballInfo = POOL_BALL_COLORS[number] || {
     bg: '#334155',
@@ -36,19 +38,12 @@ export const PoolBall: React.FC<PoolBallProps> = ({
     xl: 'w-9 h-9 text-base',
   }[size];
 
-  return (
-    <button
-      type="button"
-      id={`pool-ball-${number}`}
-      onClick={onClick}
-      disabled={disabled}
-      className={`relative rounded-full shrink-0 flex items-center justify-center transition-all transform shadow-md select-none ${sizeClasses} ${
-        isSelected ? 'ring-4 ring-amber-400 scale-110 shadow-amber-400/40' : 'hover:scale-105 active:scale-95'
-      } ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
-      style={{
-        backgroundColor: ballInfo.isStripe ? '#f8fafc' : ballInfo.bg,
-      }}
-    >
+  const baseClasses = `relative rounded-full shrink-0 flex items-center justify-center transition-all transform shadow-md select-none ${sizeClasses} ${
+    isSelected ? 'ring-4 ring-amber-400 scale-110 shadow-amber-400/40' : onClick ? 'hover:scale-105 active:scale-95' : ''
+  } ${disabled ? 'opacity-40 cursor-not-allowed' : onClick ? 'cursor-pointer' : ''} ${className}`;
+
+  const ballContent = (
+    <>
       {/* Stripe band for balls 9-15 */}
       {ballInfo.isStripe && (
         <div
@@ -66,6 +61,35 @@ export const PoolBall: React.FC<PoolBallProps> = ({
       >
         {number}
       </div>
-    </button>
+    </>
+  );
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        id={`pool-ball-${number}`}
+        onClick={onClick}
+        disabled={disabled}
+        className={baseClasses}
+        style={{
+          backgroundColor: ballInfo.isStripe ? '#f8fafc' : ballInfo.bg,
+        }}
+      >
+        {ballContent}
+      </button>
+    );
+  }
+
+  return (
+    <div
+      id={`pool-ball-${number}`}
+      className={baseClasses}
+      style={{
+        backgroundColor: ballInfo.isStripe ? '#f8fafc' : ballInfo.bg,
+      }}
+    >
+      {ballContent}
+    </div>
   );
 };

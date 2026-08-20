@@ -50,7 +50,30 @@ export const DICTIONARY: Translations = {
   remainingCards: { en: 'cards left', am: 'የቀሩ ካርዶች' },
   backToLobby: { en: '← Back to Tables', am: '← ወደ ጠረጴዛዎች ተመለስ' },
   ballsOnTable: { en: 'Balls on Table', am: 'በጠረጴዛው ላይ ያሉ ኳሶች' },
-  liveFeed: { en: 'Live Game Events', am: 'የጨዋታው ሂደት' },
+  liveFeed: { en: 'Live Game Events', am: 'የጨዋታው ክስተቶች (Live Feed)' },
+  eventHistory: { en: 'Event History', am: 'ያለፉ ክስተቶች ታሪክ' },
+  latestEvent: { en: 'Latest Event', am: 'የመጨረሻው ክስተት' },
+  viewAllEvents: { en: 'View Event History', am: 'ያለፉትን ክስተቶች ይመልከቱ' },
+  hideAllEvents: { en: 'Hide History', am: 'ታሪክን ደብቅ' },
+  noEventsYet: { en: 'No shots recorded yet on this table.', am: 'እስካሁን ምንም ኳስ አልተመታም' },
+
+  // Card Draw & Dealing
+  dealingCards: { en: 'Dealing your secret cards...', am: 'ሚስጥር ካርዶችህ እየታደሉ ነው...' },
+  cardsReady: { en: 'All cards dealt! Ready to shoot.', am: 'ሁሉም ካርዶች ተዘጋጅተዋል! ኳሶችን ምታ።' },
+  replayDeal: { en: 'Replay Deal', am: 'አደላደሉን ድገም' },
+  penaltyCardDrawn: { en: '⚠️ Foul Penalty! +1 card drawn.', am: '⚠️ ፎል! +1 ካርድ ተጨምሯል።' },
+
+  // Disband / ይፍረስ Feature
+  disbandTitle: { en: 'Disband Table / Refund (ይፍረስ)', am: 'ጨዋታው ይፍረስ / ተመላሽ (ይፍረስ)' },
+  disbandPrompt: {
+    en: 'If ALL joined players agree to disband (ይፍረስ), the match cancels immediately and 100% of entry fees are refunded back to your wallet.',
+    am: 'ሁሉም ተጫዋቾች "ይፍረስ" ብለው ድምጽ ከሰጡ ጨዋታው ወዲያውኑ ይሰረዛል፤ የሁላችሁም የመግቢያ ክፍያ 100% ወደ ዋሌታችሁ ተመላሽ ይሆናል።',
+  },
+  voteDisband: { en: 'Vote to Disband / Refund (ይፍረስ)', am: 'ጨዋታው እንዲፈርስ ምረጥ (ይፍረስ)' },
+  cancelDisbandVote: { en: 'Cancel Disband Vote', am: 'የይፍረስ ምርጫህን አንሳ' },
+  votedDisbandBadge: { en: 'Voted Disband (ይፍረስ)', am: 'ይፍረስ ብሏል' },
+  disbandProgress: { en: 'Disband Agreement', am: 'የይፍረስ ስምምነት' },
+  disbandSuccessToast: { en: 'Game Disbanded! All entry fees have been fully refunded.', am: 'ጨዋታው ፈርሷል! የመግቢያ ክፍያው ለሁሉም ተጫዋቾች ተመላሽ ተደርጓል።' },
 
   // Wallet
   addMoney: { en: '+ Add Money (Deposit)', am: '+ ብር አስገባ (Deposit)' },

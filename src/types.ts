@@ -54,6 +54,8 @@ export interface GamePlayerSummary {
   turnOrder: number;
   joinedAt: string;
   isWinner: boolean;
+  isReady?: boolean;
+  votedDisband?: boolean;
   // NOTE: Opponent card count or specific cards are NEVER exposed in public summary!
 }
 
@@ -80,6 +82,7 @@ export interface GamePublicState {
   players: GamePlayerSummary[];
   sunkBalls: number[];
   lastEvent?: GameEventPublic;
+  recentEvents?: GameEventPublic[];
   tableNumber?: string;
 }
 
@@ -95,6 +98,8 @@ export interface GamePrivateState {
 export type GameEventType =
   | 'GAME_CREATED'
   | 'PLAYER_JOINED'
+  | 'PLAYER_READY'
+  | 'PLAYER_NOT_READY'
   | 'GAME_STARTED'
   | 'TURN_STARTED'
   | 'BALL_SUNK'
@@ -104,7 +109,9 @@ export type GameEventType =
   | 'TURN_CHANGED'
   | 'TURN_PASSED'
   | 'GAME_WON'
-  | 'GAME_CANCELLED';
+  | 'GAME_CANCELLED'
+  | 'DISBAND_VOTE'
+  | 'GAME_DISBANDED';
 
 export interface GameEventPublic {
   id: string;

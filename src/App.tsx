@@ -41,6 +41,7 @@ import { CreateGameModal } from './components/CreateGameModal';
 import { DepositModal } from './components/DepositModal';
 import { WithdrawModal } from './components/WithdrawModal';
 import { RulesModal } from './components/RulesModal';
+import { WelcomeNameModal } from './components/WelcomeNameModal';
 import { soundFx } from './utils/audio';
 
 function MainAppContent({ onNavigateAdmin }: { onNavigateAdmin: () => void }) {
@@ -72,6 +73,18 @@ function MainAppContent({ onNavigateAdmin }: { onNavigateAdmin: () => void }) {
   const [showDepositModal, setShowDepositModal] = useState<boolean>(false);
   const [showWithdrawModal, setShowWithdrawModal] = useState<boolean>(false);
   const [showRulesModal, setShowRulesModal] = useState<boolean>(false);
+  const [showWelcomeModal, setShowWelcomeModal] = useState<boolean>(false);
+
+  // Check if first-time user needs to enter their name
+  useEffect(() => {
+    if (user) {
+      const welcomed = localStorage.getItem('poolcards_welcomed_v1');
+      const isDefault = !user.firstName || user.firstName === 'Player' || user.firstName.startsWith('player_');
+      if (!welcomed && isDefault) {
+        setShowWelcomeModal(true);
+      }
+    }
+  }, [user]);
 
   const playerLevel = Math.floor(playerXp / 150) + 1;
   const currentLevelXp = playerXp % 150;
@@ -1034,6 +1047,24 @@ function MainAppContent({ onNavigateAdmin }: { onNavigateAdmin: () => void }) {
       <RulesModal
         isOpen={showRulesModal}
         onClose={() => setShowRulesModal(false)}
+      />
+
+      {/* First-Time User Onboarding Name Modal */}
+      <WelcomeNameModal
+        isOpen={showWelcomeModal}
+        initialName={user?.firstName || ''}
+        language={language}
+        onSetLanguage={setLanguage}
+        onSubmit={async (name, username) => {
+          await updateProfileName(name, username);
+          localStorage.setItem('poolcards_welcomed_v1', 'true');
+          setShowWelcomeModal(false);
+          refreshProfile();
+        }}
+        onSkip={() => {
+          localStorage.setItem('poolcards_welcomed_v1', 'true');
+          setShowWelcomeModal(false);
+        }}
       />
     </div>
   );

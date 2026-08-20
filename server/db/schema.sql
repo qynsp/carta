@@ -86,10 +86,15 @@ CREATE TABLE IF NOT EXISTS game_players (
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     turn_order INT NOT NULL,
     is_winner BOOLEAN NOT NULL DEFAULT FALSE,
+    is_ready BOOLEAN NOT NULL DEFAULT FALSE,
+    voted_disband BOOLEAN NOT NULL DEFAULT FALSE,
     joined_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     UNIQUE(game_id, user_id),
     UNIQUE(game_id, turn_order)
 );
+
+ALTER TABLE game_players ADD COLUMN IF NOT EXISTS is_ready BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE game_players ADD COLUMN IF NOT EXISTS voted_disband BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE INDEX IF NOT EXISTS idx_game_players_game_id ON game_players(game_id);
 CREATE INDEX IF NOT EXISTS idx_game_players_user_id ON game_players(user_id);

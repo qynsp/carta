@@ -74,6 +74,8 @@ export interface DBGamePlayer {
   userId: string;
   turnOrder: number;
   isWinner: boolean;
+  isReady: boolean;
+  votedDisband?: boolean;
   joinedAt: string;
 }
 
@@ -253,6 +255,9 @@ export async function initDatabase() {
 
       // Explicit incremental migrations for existing tables and settings
       await client.query(`
+        ALTER TABLE game_players ADD COLUMN IF NOT EXISTS is_ready BOOLEAN NOT NULL DEFAULT FALSE;
+        ALTER TABLE game_players ADD COLUMN IF NOT EXISTS voted_disband BOOLEAN NOT NULL DEFAULT FALSE;
+
         CREATE TABLE IF NOT EXISTS platform_settings (
           id INT PRIMARY KEY DEFAULT 1,
           platform_fee_percent NUMERIC(5, 2) NOT NULL DEFAULT 5.00,

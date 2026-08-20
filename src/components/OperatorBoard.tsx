@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { AlertTriangle, CheckCircle2, RefreshCw, Volume2, ShieldCheck, ArrowLeft, Play } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, RefreshCw, Volume2, ShieldCheck, ArrowLeft, Play, X, Check } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
 import { useLanguage } from '../context/LanguageContext';
 import { GamePublicState } from '../types';
 import { PoolBall } from './PoolBall';
+import { ShotConfirmModal, ShotConfirmData } from './ShotConfirmModal';
 import { soundFx } from '../utils/audio';
+import { translateGameEvent } from '../utils/eventTranslator';
 
 interface OperatorBoardProps {
   initialGameId?: string;
@@ -23,6 +25,27 @@ export const OperatorBoard: React.FC<OperatorBoardProps> = ({ initialGameId, onB
   const [processing, setProcessing] = useState<boolean>(false);
   const [shotNotice, setShotNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pendingShot, setPendingShot] = useState<ShotConfirmData | null>(null);
+  const [touchSafetyEnabled, setTouchSafetyEnabled] = useState<boolean>(() => {
+    const saved = localStorage.getItem('poolcards_operator_safety');
+    return saved !== null ? saved === 'true' : true;
+  });
+
+  const handleToggleSafety = () => {
+    soundFx.playButtonClick();
+    const nextVal = !touchSafetyEnabled;
+    setTouchSafetyEnabled(nextVal);
+    localStorage.setItem('poolcards_operator_safety', String(nextVal));
+  };
+
+  const triggerShot = (ballNumber?: number, isScratch = false, isMiss = false) => {
+    if (touchSafetyEnabled) {
+      soundFx.playButtonClick();
+      setPendingShot({ ballNumber, isScratch, isMiss });
+    } else {
+      handleShot(ballNumber, isScratch, isMiss);
+    }
+  };
 
   const fetchActiveGames = async () => {
     try {
@@ -89,7 +112,24 @@ export const OperatorBoard: React.FC<OperatorBoardProps> = ({ initialGameId, onB
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to submit shot event');
 
-      setShotNotice(data.result?.message || (language === 'am' ? 'ምቱ በትክክል ተመዝግቧል' : 'Shot reported successfully'));
+      const rawNotice = data.result?.message;
+      const eventNotice = rawNotice
+        ? translateGameEvent(
+            {
+              id: `op-${Date.now()}`,
+              gameId: selectedGameId,
+              type: isScratch ? 'SCRATCH' : isMiss ? 'TURN_PASSED' : 'BALL_SUNK',
+              ballNumber,
+              message: rawNotice,
+              createdAt: new Date().toISOString(),
+            },
+            language
+          )
+        : language === 'am'
+        ? 'ምቱ በትክክል ተመዝግቧል'
+        : 'Shot reported successfully';
+
+      setShotNotice(eventNotice);
       setTimeout(() => setShotNotice(null), 4000);
     } catch (err: any) {
       setError(err.message || 'Shot reporting error');
@@ -222,50 +262,103 @@ export const OperatorBoard: React.FC<OperatorBoardProps> = ({ initialGameId, onB
                 {language === 'am' ? 'የገባች ኳስ ምረጥ (1–15)' : 'SUNK BALL KEYPAD (1–15)'}
               </h3>
             </div>
-            <span className="text-[11px] text-zinc-400">
-              {language === 'am' ? 'ኳሷ ስትገባ ቁጥሯን ይጫኑ' : 'Tap ball when pocketed on table'}
-            </span>
+            <button
+              type="button"
+              onClick={handleToggleSafety}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border transition-all cursor-pointer ${
+                touchSafetyEnabled
+                  ? 'bg-emerald-950/80 border-emerald-500/50 text-emerald-300'
+                  : 'bg-zinc-800 border-zinc-700 text-zinc-400'
+              }`}
+            >
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>{touchSafetyEnabled ? '🛡️ Safety: ON' : '🛡️ Safety: OFF'}</span>
+            </button>
           </div>
 
           {/* Grid of 15 pool balls */}
           <div className="grid grid-cols-5 gap-3 sm:gap-4 justify-items-center py-2">
-            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15].map((num) => (
-              <div key={num} className="flex flex-col items-center space-y-1.5 w-full">
-                <PoolBall
-                  number={num}
-                  size="lg"
-                  disabled={processing}
-                  onClick={() => handleShot(num, false)}
-                />
-                <span className="text-[11px] font-black text-zinc-400">
-                  {num <= 13 ? (num === 1 ? 'A (1)' : num === 11 ? 'J (11)' : num === 12 ? 'Q (12)' : num === 13 ? 'K (13)' : `Ball ${num}`) : 'Neutral'}
-                </span>
-              </div>
-            ))}
+            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15].map((num) => {
+              const isNeutral = num === 14 || num === 15;
+              return (
+                <div key={num} className="flex flex-col items-center space-y-1.5 w-full">
+                  <div className="relative">
+                    <PoolBall
+                      number={num}
+                      size="lg"
+                      disabled={processing}
+                      onClick={() => triggerShot(num, false, false)}
+                    />
+                    {isNeutral && (
+                      <span className="absolute -bottom-1 -right-1 px-1 py-0.2 bg-emerald-500 text-zinc-950 text-[7px] font-black rounded uppercase border border-zinc-900 shadow">
+                        NEUTRAL
+                      </span>
+                    )}
+                  </div>
+                  <span className={`text-[11px] font-black ${isNeutral ? 'text-emerald-400 font-extrabold' : 'text-zinc-400'}`}>
+                    {num <= 13
+                      ? num === 1
+                        ? 'A (1)'
+                        : num === 11
+                        ? 'J (11)'
+                        : num === 12
+                        ? 'Q (12)'
+                        : num === 13
+                        ? 'K (13)'
+                        : `Ball ${num}`
+                      : '⚪ Neutral'}
+                  </span>
+                </div>
+              );
+            })}
           </div>
 
-          {/* Scratch / Foul Button */}
-          <div className="pt-2">
+          {/* Action Buttons: Miss & Scratch */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
             <button
-              onClick={() => handleShot(undefined, true)}
+              onClick={() => triggerShot(undefined, false, true)}
               disabled={processing}
-              className="w-full py-4 rounded-2xl bg-zinc-800 hover:bg-zinc-700 active:scale-[0.99] text-white border border-zinc-700 hover:border-amber-500/50 font-black text-xs sm:text-sm tracking-wider uppercase shadow-xl transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              className="py-3.5 px-4 rounded-2xl bg-blue-950/80 hover:bg-blue-900 active:scale-[0.99] text-blue-200 border border-blue-600/50 font-black text-xs sm:text-sm tracking-wider uppercase shadow-xl transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
             >
-              <span className="text-xl">⚠️</span>
+              <span className="text-lg">🎯</span>
               <span>
                 {language === 'am'
-                  ? 'ስክራች / ቅጣት (ነጭ ኳስ ከገባች ወይም ጥፋት)'
-                  : 'SCRATCH (CUE BALL POCKET / FOUL)'}
+                  ? 'ምት አምልጧል (ተራ ማለፍ)'
+                  : 'MISS SHOT (PASS TURN)'}
               </span>
             </button>
-            <p className="text-[11px] text-zinc-500 text-center mt-2 font-medium">
-              {language === 'am'
-                ? 'ስክራች ሲከሰት ተኳሹ ተጨማሪ 1 ካርድ ተቀጥቶ ተራው ያልፋል።'
-                : 'Scratch penalizes current shooter with 1 secret card and passes the turn.'}
-            </p>
+            <button
+              onClick={() => triggerShot(undefined, true, false)}
+              disabled={processing}
+              className="py-3.5 px-4 rounded-2xl bg-rose-950/80 hover:bg-rose-900 active:scale-[0.99] text-rose-200 border border-rose-600/50 font-black text-xs sm:text-sm tracking-wider uppercase shadow-xl transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+            >
+              <span className="text-lg">⚠️</span>
+              <span>
+                {language === 'am'
+                  ? 'ስክራች / ቅጣት (+1 ካርድ)'
+                  : 'SCRATCH / FOUL (+1 CARD)'}
+              </span>
+            </button>
           </div>
         </div>
       )}
+
+      {/* Accidental Touch Protection Modal for Operator */}
+      <ShotConfirmModal
+        isOpen={pendingShot !== null}
+        data={pendingShot}
+        myCards={[]}
+        language={language}
+        loading={processing}
+        onConfirm={() => {
+          if (pendingShot) {
+            const { ballNumber, isScratch, isMiss } = pendingShot;
+            setPendingShot(null);
+            handleShot(ballNumber, isScratch, isMiss);
+          }
+        }}
+        onClose={() => setPendingShot(null)}
+      />
     </div>
   );
 };
