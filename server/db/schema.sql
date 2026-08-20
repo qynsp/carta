@@ -175,6 +175,30 @@ CREATE TABLE IF NOT EXISTS platform_settings (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Ensure columns exist even if table was created in an earlier schema version
+ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS platform_fee_percent NUMERIC(5, 2) NOT NULL DEFAULT 5.00;
+ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS min_deposit NUMERIC(14, 2) NOT NULL DEFAULT 10.00;
+ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS max_deposit NUMERIC(14, 2) NOT NULL DEFAULT 50000.00;
+ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS min_withdrawal NUMERIC(14, 2) NOT NULL DEFAULT 50.00;
+ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS max_withdrawal NUMERIC(14, 2) NOT NULL DEFAULT 20000.00;
+ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS min_game_entry NUMERIC(14, 2) NOT NULL DEFAULT 10.00;
+ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS max_game_entry NUMERIC(14, 2) NOT NULL DEFAULT 5000.00;
+ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS telebirr_receiver_number VARCHAR(32) NOT NULL DEFAULT '0911223344';
+ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS telebirr_receiver_name VARCHAR(128) NOT NULL DEFAULT 'Pool Cards Addis';
+ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS real_money_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS currency VARCHAR(10) NOT NULL DEFAULT 'ETB';
+ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+
+-- Seed default settings row if missing
+INSERT INTO platform_settings (
+    id, platform_fee_percent, min_deposit, max_deposit, min_withdrawal, max_withdrawal,
+    min_game_entry, max_game_entry, telebirr_receiver_number, telebirr_receiver_name,
+    real_money_enabled, currency, updated_at
+) VALUES (
+    1, 5.00, 10.00, 50000.00, 50.00, 20000.00, 10.00, 5000.00,
+    '0911223344', 'Pool Cards Addis', FALSE, 'ETB', NOW()
+) ON CONFLICT (id) DO NOTHING;
+
 -- Admin Audit Logs Table
 CREATE TABLE IF NOT EXISTS admin_audit_logs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

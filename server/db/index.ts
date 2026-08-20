@@ -250,6 +250,48 @@ export async function initDatabase() {
         await client.query(schemaSql);
         console.log('[DB] PostgreSQL schema initialized/verified.');
       }
+
+      // Explicit incremental migrations for existing tables and settings
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS platform_settings (
+          id INT PRIMARY KEY DEFAULT 1,
+          platform_fee_percent NUMERIC(5, 2) NOT NULL DEFAULT 5.00,
+          min_deposit NUMERIC(14, 2) NOT NULL DEFAULT 10.00,
+          max_deposit NUMERIC(14, 2) NOT NULL DEFAULT 50000.00,
+          min_withdrawal NUMERIC(14, 2) NOT NULL DEFAULT 50.00,
+          max_withdrawal NUMERIC(14, 2) NOT NULL DEFAULT 20000.00,
+          min_game_entry NUMERIC(14, 2) NOT NULL DEFAULT 10.00,
+          max_game_entry NUMERIC(14, 2) NOT NULL DEFAULT 5000.00,
+          telebirr_receiver_number VARCHAR(32) NOT NULL DEFAULT '0911223344',
+          telebirr_receiver_name VARCHAR(128) NOT NULL DEFAULT 'Pool Cards Addis',
+          real_money_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+          currency VARCHAR(10) NOT NULL DEFAULT 'ETB',
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+
+        ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS platform_fee_percent NUMERIC(5, 2) NOT NULL DEFAULT 5.00;
+        ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS min_deposit NUMERIC(14, 2) NOT NULL DEFAULT 10.00;
+        ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS max_deposit NUMERIC(14, 2) NOT NULL DEFAULT 50000.00;
+        ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS min_withdrawal NUMERIC(14, 2) NOT NULL DEFAULT 50.00;
+        ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS max_withdrawal NUMERIC(14, 2) NOT NULL DEFAULT 20000.00;
+        ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS min_game_entry NUMERIC(14, 2) NOT NULL DEFAULT 10.00;
+        ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS max_game_entry NUMERIC(14, 2) NOT NULL DEFAULT 5000.00;
+        ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS telebirr_receiver_number VARCHAR(32) NOT NULL DEFAULT '0911223344';
+        ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS telebirr_receiver_name VARCHAR(128) NOT NULL DEFAULT 'Pool Cards Addis';
+        ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS real_money_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+        ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS currency VARCHAR(10) NOT NULL DEFAULT 'ETB';
+        ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+
+        INSERT INTO platform_settings (
+          id, platform_fee_percent, min_deposit, max_deposit, min_withdrawal, max_withdrawal,
+          min_game_entry, max_game_entry, telebirr_receiver_number, telebirr_receiver_name,
+          real_money_enabled, currency, updated_at
+        ) VALUES (
+          1, 5.00, 10.00, 50000.00, 50.00, 20000.00, 10.00, 5000.00,
+          '0911223344', 'Pool Cards Addis', FALSE, 'ETB', NOW()
+        ) ON CONFLICT (id) DO NOTHING;
+      `);
+      console.log('[DB] Platform settings table and columns verified.');
       client.release();
     } catch (err) {
       console.error('[DB] PostgreSQL connection error, falling back to in-memory store:', err);

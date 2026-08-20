@@ -102,6 +102,7 @@ export type GameEventType =
   | 'CARD_ADDED'
   | 'CARDS_REMOVED'
   | 'TURN_CHANGED'
+  | 'TURN_PASSED'
   | 'GAME_WON'
   | 'GAME_CANCELLED';
 

@@ -833,27 +833,58 @@ const handleUpdateSettings = async (req: AuthRequest, res: Response) => {
     const cleanTelebirrName = telebirrReceiverName ? String(telebirrReceiverName).trim() : 'Pool Cards Addis';
 
     const pool = getPool();
+    let updatedSettings: any = null;
+
     if (pool) {
-      await pool.query(
-        `UPDATE platform_settings SET 
-           platform_fee_percent = $1, min_deposit = $2, max_deposit = $3,
-           min_withdrawal = $4, max_withdrawal = $5, min_game_entry = $6, max_game_entry = $7,
-           telebirr_receiver_number = $8, telebirr_receiver_name = $9,
-           real_money_enabled = $10, updated_at = NOW()
-         WHERE id = 1`,
+      const upsertRes = await pool.query(
+        `INSERT INTO platform_settings (
+           id, platform_fee_percent, min_deposit, max_deposit,
+           min_withdrawal, max_withdrawal, min_game_entry, max_game_entry,
+           telebirr_receiver_number, telebirr_receiver_name,
+           real_money_enabled, updated_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+         ON CONFLICT (id) DO UPDATE SET
+           platform_fee_percent = EXCLUDED.platform_fee_percent,
+           min_deposit = EXCLUDED.min_deposit,
+           max_deposit = EXCLUDED.max_deposit,
+           min_withdrawal = EXCLUDED.min_withdrawal,
+           max_withdrawal = EXCLUDED.max_withdrawal,
+           min_game_entry = EXCLUDED.min_game_entry,
+           max_game_entry = EXCLUDED.max_game_entry,
+           telebirr_receiver_number = EXCLUDED.telebirr_receiver_number,
+           telebirr_receiver_name = EXCLUDED.telebirr_receiver_name,
+           real_money_enabled = EXCLUDED.real_money_enabled,
+           updated_at = NOW()
+         RETURNING 
+           id,
+           platform_fee_percent as "platformFeePercent",
+           min_deposit as "minDeposit",
+           max_deposit as "maxDeposit",
+           min_withdrawal as "minWithdrawal",
+           max_withdrawal as "maxWithdrawal",
+           min_game_entry as "minGameEntry",
+           max_game_entry as "maxGameEntry",
+           telebirr_receiver_number as "telebirrReceiverNumber",
+           telebirr_receiver_name as "telebirrReceiverName",
+           real_money_enabled as "realMoneyEnabled",
+           currency,
+           updated_at as "updatedAt"
+        `,
         [
-          platformFeePercent ?? 5.0,
-          minDeposit ?? 10.0,
-          maxDeposit ?? 50000.0,
-          minWithdrawal ?? 50.0,
-          maxWithdrawal ?? 20000.0,
-          minGameEntry ?? 10.0,
-          maxGameEntry ?? 5000.0,
+          1,
+          platformFeePercent !== undefined ? parseFloat(platformFeePercent) : 5.0,
+          minDeposit !== undefined ? parseFloat(minDeposit) : 10.0,
+          maxDeposit !== undefined ? parseFloat(maxDeposit) : 50000.0,
+          minWithdrawal !== undefined ? parseFloat(minWithdrawal) : 50.0,
+          maxWithdrawal !== undefined ? parseFloat(maxWithdrawal) : 20000.0,
+          minGameEntry !== undefined ? parseFloat(minGameEntry) : 10.0,
+          maxGameEntry !== undefined ? parseFloat(maxGameEntry) : 5000.0,
           cleanTelebirrNum,
           cleanTelebirrName,
-          Boolean(realMoneyEnabled)
+          Boolean(realMoneyEnabled),
         ]
       );
+      updatedSettings = upsertRes.rows[0];
     } else {
       memDb.platformSettings = {
         ...memDb.platformSettings,
@@ -869,6 +900,7 @@ const handleUpdateSettings = async (req: AuthRequest, res: Response) => {
         realMoneyEnabled: Boolean(realMoneyEnabled),
         updatedAt: new Date().toISOString(),
       };
+      updatedSettings = memDb.platformSettings;
     }
 
     await AuditService.log(
@@ -880,7 +912,7 @@ const handleUpdateSettings = async (req: AuthRequest, res: Response) => {
       `Updated settings. Telebirr: ${cleanTelebirrNum} (${cleanTelebirrName}), fee: ${platformFeePercent}%, realMoney: ${realMoneyEnabled}`
     );
 
-    return res.json({ success: true, settings: memDb.platformSettings });
+    return res.json({ success: true, settings: updatedSettings });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
