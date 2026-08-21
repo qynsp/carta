@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { memDb, getPool, DBGame, DBGamePlayer, DBPlayerCard, DBGameEvent, toCleanUuid } from '../db';
-import { CardValue, GameStatus, GamePublicState, GamePrivateState, GameEventPublic, GamePlayerSummary, GameEventType } from '../../src/types';
+import { CardValue, GameStatus, GamePublicState, GamePrivateState, GameEventPublic, GamePlayerSummary, GameEventType, SunkBallAuditItem, RevealedWinnerCard } from '../../src/types';
 import { WalletLedgerService } from './walletLedger';
 
 export type BroadcastCallback = (gameId: string, eventType: string, payload?: any) => void;
@@ -556,6 +556,299 @@ export class GameEngineService {
   }
 
   /**
+   * Vote on End Game Verification (Anti-Manipulation Protection)
+   * When match completes, players verify whether the match was fair or manipulated.
+   * If >=50% confirm, payout is disbursed to winner.
+   * If majority/dispute reports manipulation (>=50% manipulated), game is cancelled and 100% of all player fees are refunded.
+   */
+  static async voteEndGameVerification(
+    gameId: string,
+    userId: string,
+    vote: 'CONFIRMED' | 'MANIPULATED'
+  ): Promise<{
+    verificationStatus: 'PENDING' | 'CONFIRMED' | 'MANIPULATED';
+    payoutStatus: 'PENDING' | 'PAID' | 'REFUNDED';
+    confirmedCount: number;
+    manipulatedCount: number;
+    requiredConfirmations: number;
+    totalPlayers: number;
+    isResolved: boolean;
+  }> {
+    const pool = getPool();
+    const cleanGameId = toCleanUuid(gameId);
+    const cleanUserId = toCleanUuid(userId);
+    const now = new Date().toISOString();
+
+    if (pool) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        const gameRes = await client.query('SELECT * FROM games WHERE id = $1 FOR UPDATE', [cleanGameId]);
+        if (gameRes.rows.length === 0) throw new Error('Game not found');
+        const game = gameRes.rows[0];
+
+        if (game.status !== 'COMPLETED' && game.status !== 'CANCELLED') {
+          throw new Error('Game must be in completed state to verify');
+        }
+
+        if (game.verification_status && game.verification_status !== 'PENDING') {
+          throw new Error(`Game verification has already resolved as ${game.verification_status}`);
+        }
+
+        // Check if user is a joined player
+        const playerRes = await client.query(
+          'SELECT * FROM game_players WHERE game_id = $1 AND user_id = $2',
+          [cleanGameId, cleanUserId]
+        );
+        if (playerRes.rows.length === 0) {
+          throw new Error('Only joined players in this table can verify the match');
+        }
+
+        const userRes = await client.query('SELECT first_name, username FROM users WHERE id = $1', [cleanUserId]);
+        const userName = userRes.rows[0]?.first_name || userRes.rows[0]?.username || 'Player';
+
+        // Update this player's vote
+        await client.query(
+          'UPDATE game_players SET end_game_vote = $1, end_game_voted_at = NOW() WHERE game_id = $2 AND user_id = $3',
+          [vote, cleanGameId, cleanUserId]
+        );
+
+        // Get all players and current votes
+        const allPlayersRes = await client.query(
+          'SELECT user_id, end_game_vote FROM game_players WHERE game_id = $1',
+          [cleanGameId]
+        );
+        const players = allPlayersRes.rows;
+        const totalPlayers = players.length;
+        const requiredConfirmations = Math.ceil(totalPlayers * 0.5);
+
+        const confirmedCount = players.filter((p: any) => p.end_game_vote === 'CONFIRMED').length;
+        const manipulatedCount = players.filter((p: any) => p.end_game_vote === 'MANIPULATED').length;
+        const votedCount = confirmedCount + manipulatedCount;
+
+        let newVerificationStatus: 'PENDING' | 'CONFIRMED' | 'MANIPULATED' = 'PENDING';
+        let newPayoutStatus: 'PENDING' | 'PAID' | 'REFUNDED' = 'PENDING';
+        let isResolved = false;
+
+        // RESOLUTION LOGIC:
+        if (manipulatedCount >= requiredConfirmations || (votedCount === totalPlayers && manipulatedCount > confirmedCount)) {
+          // Flagged as MANIPULATED / FRAUD -> Full Refund to ALL Players!
+          newVerificationStatus = 'MANIPULATED';
+          newPayoutStatus = 'REFUNDED';
+          isResolved = true;
+
+          await client.query(
+            `UPDATE games SET status = 'CANCELLED', verification_status = 'MANIPULATED', payout_status = 'REFUNDED', completed_at = NOW() WHERE id = $1`,
+            [cleanGameId]
+          );
+
+          const entryFee = parseFloat(game.entry_fee);
+          if (entryFee > 0) {
+            for (const p of players) {
+              await WalletLedgerService.refundGameEntry(
+                p.user_id,
+                cleanGameId,
+                entryFee,
+                'Game cancelled: Reported as manipulated by player majority vote (ማጭበርበር ሪፖርት ተደርጓል)'
+              );
+            }
+          }
+
+          const refundMsg = `🚨 Game flagged as manipulated by player majority vote (${manipulatedCount}/${totalPlayers}). Match cancelled and 100% of entry fees (${game.entry_fee} ETB each) refunded to all players!`;
+          await client.query(
+            `INSERT INTO game_events (game_id, type, user_id, message, created_at)
+             VALUES ($1, 'GAME_MANIPULATED_REFUND', $2, $3, NOW())`,
+            [cleanGameId, cleanUserId, refundMsg]
+          );
+        } else if (confirmedCount >= requiredConfirmations && manipulatedCount < requiredConfirmations) {
+          // CONFIRMED as FAIR GAME -> Release Payout to Winner!
+          newVerificationStatus = 'CONFIRMED';
+          newPayoutStatus = 'PAID';
+          isResolved = true;
+
+          await client.query(
+            `UPDATE games SET verification_status = 'CONFIRMED', payout_status = 'PAID' WHERE id = $1`,
+            [cleanGameId]
+          );
+
+          if (game.winner_user_id) {
+            const payout = parseFloat(game.winner_payout);
+            const pot = parseFloat(game.total_pot);
+            const fee = pot - payout;
+            await WalletLedgerService.creditWinnerPayout(
+              game.winner_user_id,
+              cleanGameId,
+              payout,
+              fee,
+              game.name
+            );
+          }
+
+          const confirmMsg = `✅ Match verified and confirmed as fair by 50%+ player vote (${confirmedCount}/${totalPlayers}). Winner payout of ${game.winner_payout} ETB successfully paid!`;
+          await client.query(
+            `INSERT INTO game_events (game_id, type, user_id, message, created_at)
+             VALUES ($1, 'GAME_VERIFIED', $2, $3, NOW())`,
+            [cleanGameId, cleanUserId, confirmMsg]
+          );
+        } else {
+          // Vote recorded, still pending
+          const voteMsg = vote === 'CONFIRMED'
+            ? `✅ ${userName} confirmed the match as fair [${confirmedCount}/${requiredConfirmations} confirmed].`
+            : `🚨 ${userName} reported the match as manipulated [${manipulatedCount}/${requiredConfirmations} reports].`;
+
+          await client.query(
+            `INSERT INTO game_events (game_id, type, user_id, message, created_at)
+             VALUES ($1, 'END_GAME_VOTE', $2, $3, NOW())`,
+            [cleanGameId, cleanUserId, voteMsg]
+          );
+        }
+
+        await client.query('COMMIT');
+
+        if (broadcastFn) broadcastFn(cleanGameId, 'GAME_UPDATED');
+
+        return {
+          verificationStatus: newVerificationStatus,
+          payoutStatus: newPayoutStatus,
+          confirmedCount,
+          manipulatedCount,
+          requiredConfirmations,
+          totalPlayers,
+          isResolved,
+        };
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+    } else {
+      // In-Memory
+      const game = memDb.games.get(cleanGameId) || memDb.games.get(gameId);
+      if (!game) throw new Error('Game not found');
+
+      if (game.status !== 'COMPLETED' && game.status !== 'CANCELLED') {
+        throw new Error('Game must be in completed state to verify');
+      }
+
+      if (game.verificationStatus && game.verificationStatus !== 'PENDING') {
+        throw new Error(`Game verification has already resolved as ${game.verificationStatus}`);
+      }
+
+      const player = memDb.gamePlayers.find(
+        (p) => (p.gameId === game.id || p.gameId === cleanGameId) && p.userId === cleanUserId
+      );
+      if (!player) {
+        throw new Error('Only joined players in this table can verify the match');
+      }
+
+      const user = memDb.users.get(cleanUserId);
+      const userName = user?.firstName || user?.username || 'Player';
+
+      player.endGameVote = vote;
+      player.endGameVotedAt = now;
+
+      const players = memDb.gamePlayers.filter((p) => p.gameId === game.id || p.gameId === cleanGameId);
+      const totalPlayers = players.length;
+      const requiredConfirmations = Math.ceil(totalPlayers * 0.5);
+
+      const confirmedCount = players.filter((p) => p.endGameVote === 'CONFIRMED').length;
+      const manipulatedCount = players.filter((p) => p.endGameVote === 'MANIPULATED').length;
+      const votedCount = confirmedCount + manipulatedCount;
+
+      let newVerificationStatus: 'PENDING' | 'CONFIRMED' | 'MANIPULATED' = 'PENDING';
+      let newPayoutStatus: 'PENDING' | 'PAID' | 'REFUNDED' = 'PENDING';
+      let isResolved = false;
+
+      if (manipulatedCount >= requiredConfirmations || (votedCount === totalPlayers && manipulatedCount > confirmedCount)) {
+        newVerificationStatus = 'MANIPULATED';
+        newPayoutStatus = 'REFUNDED';
+        isResolved = true;
+
+        game.status = 'CANCELLED';
+        game.verificationStatus = 'MANIPULATED';
+        game.payoutStatus = 'REFUNDED';
+        game.completedAt = now;
+
+        if (game.entryFee > 0) {
+          for (const p of players) {
+            await WalletLedgerService.refundGameEntry(
+              p.userId,
+              game.id,
+              game.entryFee,
+              'Game cancelled: Reported as manipulated by player majority vote (ማጭበርበር ሪፖርት ተደርጓል)'
+            );
+          }
+        }
+
+        const refundMsg = `🚨 Game flagged as manipulated by player majority vote (${manipulatedCount}/${totalPlayers}). Match cancelled and 100% of entry fees (${game.entryFee} ETB each) refunded to all players!`;
+        memDb.gameEvents.push({
+          id: `ge-${crypto.randomUUID()}`,
+          gameId: game.id,
+          type: 'GAME_MANIPULATED_REFUND',
+          userId: cleanUserId,
+          message: refundMsg,
+          createdAt: now,
+        });
+      } else if (confirmedCount >= requiredConfirmations && manipulatedCount < requiredConfirmations) {
+        newVerificationStatus = 'CONFIRMED';
+        newPayoutStatus = 'PAID';
+        isResolved = true;
+
+        game.verificationStatus = 'CONFIRMED';
+        game.payoutStatus = 'PAID';
+
+        if (game.winnerUserId) {
+          const fee = game.totalPot - game.winnerPayout;
+          await WalletLedgerService.creditWinnerPayout(
+            game.winnerUserId,
+            game.id,
+            game.winnerPayout,
+            fee,
+            game.name
+          );
+        }
+
+        const confirmMsg = `✅ Match verified and confirmed as fair by 50%+ player vote (${confirmedCount}/${totalPlayers}). Winner payout of ${game.winnerPayout} ETB successfully paid!`;
+        memDb.gameEvents.push({
+          id: `ge-${crypto.randomUUID()}`,
+          gameId: game.id,
+          type: 'GAME_VERIFIED',
+          userId: cleanUserId,
+          message: confirmMsg,
+          createdAt: now,
+        });
+      } else {
+        const voteMsg = vote === 'CONFIRMED'
+          ? `✅ ${userName} confirmed the match as fair [${confirmedCount}/${requiredConfirmations} confirmed].`
+          : `🚨 ${userName} reported the match as manipulated [${manipulatedCount}/${requiredConfirmations} reports].`;
+
+        memDb.gameEvents.push({
+          id: `ge-${crypto.randomUUID()}`,
+          gameId: game.id,
+          type: 'END_GAME_VOTE',
+          userId: cleanUserId,
+          message: voteMsg,
+          createdAt: now,
+        });
+      }
+
+      if (broadcastFn) broadcastFn(cleanGameId, 'GAME_UPDATED');
+
+      return {
+        verificationStatus: newVerificationStatus,
+        payoutStatus: newPayoutStatus,
+        confirmedCount,
+        manipulatedCount,
+        requiredConfirmations,
+        totalPlayers,
+        isResolved,
+      };
+    }
+  }
+
+  /**
    * Start an open match (when 2+ players are joined AND ALL players are READY)
    */
   static async startGame(gameId: string, initiatorUserId: string): Promise<boolean> {
@@ -793,10 +1086,10 @@ export class GameEngineService {
               const remainingCount = parseInt(remainingRes.rows[0].count, 10);
 
               if (remainingCount === 0) {
-                // CASE D: EMPTY HAND -> GAME WON!
+                // CASE D: EMPTY HAND -> GAME WON! (Enters Verification Phase)
                 outcome = 'GAME_WON';
                 await client.query(
-                  `UPDATE games SET status = 'COMPLETED', completed_at = NOW(), winner_user_id = $1 WHERE id = $2`,
+                  `UPDATE games SET status = 'COMPLETED', completed_at = NOW(), winner_user_id = $1, verification_status = 'PENDING', payout_status = 'PENDING' WHERE id = $2`,
                   [currentTurnUserId, cleanGameId]
                 );
 
@@ -805,18 +1098,12 @@ export class GameEngineService {
                   [cleanGameId, currentTurnUserId]
                 );
 
-                message = `🏆 ${playerName} sank the ${ballNumber}-ball and won the game!`;
+                message = `🏆 ${playerName} sank the ${ballNumber}-ball and cleared all cards! Verification phase active: 50% player confirmation needed before payout release.`;
                 await client.query(
                   `INSERT INTO game_events (game_id, type, user_id, ball_number, message, created_at)
                    VALUES ($1, 'GAME_WON', $2, $3, $4, NOW())`,
                   [cleanGameId, currentTurnUserId, ballNumber, message]
                 );
-
-                // Credit Winner Payout
-                const payout = parseFloat(game.winner_payout);
-                const pot = parseFloat(game.total_pot);
-                const fee = pot - payout;
-                await WalletLedgerService.creditWinnerPayout(currentTurnUserId, cleanGameId, payout, fee, game.name);
               } else {
                 // Keep turn!
                 outcome = 'MATCH_SUNK';
@@ -961,16 +1248,18 @@ export class GameEngineService {
           );
 
           if (remainingCards.length === 0) {
-            // Player won!
+            // Player won! (Enters Verification Phase)
             outcome = 'GAME_WON';
             game.status = 'COMPLETED';
             game.completedAt = now;
             game.winnerUserId = currentTurnUserId;
+            game.verificationStatus = 'PENDING';
+            game.payoutStatus = 'PENDING';
 
             const gp = players.find((p) => p.userId === currentTurnUserId);
             if (gp) gp.isWinner = true;
 
-            message = `🏆 ${playerName} sank the ${ballNumber}-ball and won the game!`;
+            message = `🏆 ${playerName} sank the ${ballNumber}-ball and cleared all cards! Verification phase active: 50% player confirmation needed before payout release.`;
             memDb.gameEvents.push({
               id: `ge-${crypto.randomUUID()}`,
               gameId: game.id,
@@ -980,10 +1269,6 @@ export class GameEngineService {
               message,
               createdAt: now,
             });
-
-            // Credit Winner
-            const fee = game.totalPot - game.winnerPayout;
-            await WalletLedgerService.creditWinnerPayout(currentTurnUserId, game.id, game.winnerPayout, fee, game.name);
           } else {
             // Keep turn
             outcome = 'MATCH_SUNK';
@@ -1128,7 +1413,8 @@ export class GameEngineService {
 
       const playersRes = await pool.query(
         `SELECT gp.user_id as "userId", gp.turn_order as "turnOrder", gp.joined_at as "joinedAt", gp.is_winner as "isWinner",
-                gp.is_ready as "isReady", gp.voted_disband as "votedDisband", u.username, u.first_name as "firstName"
+                gp.is_ready as "isReady", gp.voted_disband as "votedDisband", gp.end_game_vote as "endGameVote",
+                gp.end_game_voted_at as "endGameVotedAt", u.username, u.first_name as "firstName"
          FROM game_players gp
          JOIN users u ON gp.user_id = u.id
          WHERE gp.game_id = $1
@@ -1164,10 +1450,42 @@ export class GameEngineService {
       );
 
       const sunkRes = await pool.query(
-        `SELECT DISTINCT ball_number FROM game_events WHERE game_id = $1 AND ball_number IS NOT NULL ORDER BY ball_number ASC`,
+        `SELECT ge.ball_number as "ballNumber", ge.user_id as "sunkByUserId", ge.created_at as "createdAt",
+                u.first_name as "sunkByName"
+         FROM game_events ge
+         LEFT JOIN users u ON ge.user_id = u.id
+         WHERE ge.game_id = $1 AND ge.ball_number IS NOT NULL
+         ORDER BY ge.created_at ASC`,
         [cleanGameId]
       );
-      const sunkBalls: number[] = sunkRes.rows.map((r) => parseInt(r.ball_number, 10));
+      const sunkBallsAudit = sunkRes.rows.map((r: any) => ({
+        ballNumber: parseInt(r.ballNumber, 10),
+        sunkByUserId: r.sunkByUserId,
+        sunkByName: r.sunkByName,
+        createdAt: r.createdAt,
+      }));
+
+      const sunkBalls: number[] = Array.from(new Set(sunkBallsAudit.map((s) => s.ballNumber))).sort((a, b) => a - b);
+
+      let winnerCardsRevealed: any[] | undefined = undefined;
+      if (g.winner_user_id && (g.status === 'COMPLETED' || g.status === 'CANCELLED')) {
+        const cardsRes = await pool.query(
+          `SELECT card_value as "cardValue", is_removed as "isRemoved", removed_at as "removedAt", is_scratch_card as "isScratchCard"
+           FROM player_cards WHERE game_id = $1 AND user_id = $2 ORDER BY card_value ASC`,
+          [cleanGameId, g.winner_user_id]
+        );
+        winnerCardsRevealed = cardsRes.rows.map((c: any) => ({
+          cardValue: parseInt(c.cardValue, 10),
+          isRemoved: Boolean(c.isRemoved),
+          removedAt: c.removedAt,
+          isScratchCard: Boolean(c.isScratchCard),
+        }));
+      }
+
+      const totalPlayers = playersRes.rows.length;
+      const requiredConfirmations = Math.ceil(totalPlayers * 0.5);
+      const confirmedVotesCount = playersRes.rows.filter((p: any) => p.endGameVote === 'CONFIRMED').length;
+      const manipulatedVotesCount = playersRes.rows.filter((p: any) => p.endGameVote === 'MANIPULATED').length;
 
       return {
         id: g.id,
@@ -1191,6 +1509,13 @@ export class GameEngineService {
         completedAt: g.completed_at,
         players: playersRes.rows,
         sunkBalls,
+        sunkBallsAudit,
+        winnerCardsRevealed,
+        verificationStatus: g.verification_status || (g.status === 'COMPLETED' ? 'PENDING' : undefined),
+        payoutStatus: g.payout_status || (g.status === 'COMPLETED' ? 'PENDING' : undefined),
+        confirmedVotesCount,
+        manipulatedVotesCount,
+        requiredConfirmations,
         lastEvent: lastEventRes.rows[0],
         recentEvents: recentEventsRes.rows,
         tableNumber: g.table_number,
@@ -1202,7 +1527,7 @@ export class GameEngineService {
     if (!g) throw new Error('Game not found');
 
     const gpList = memDb.gamePlayers
-      .filter((p) => p.gameId === g.id)
+      .filter((p) => p.gameId === g.id || p.gameId === cleanGameId)
       .sort((a, b) => a.turnOrder - b.turnOrder);
 
     const players: GamePlayerSummary[] = gpList.map((p) => {
@@ -1216,6 +1541,8 @@ export class GameEngineService {
         isWinner: p.isWinner,
         isReady: Boolean(p.isReady),
         votedDisband: Boolean(p.votedDisband),
+        endGameVote: p.endGameVote || undefined,
+        endGameVotedAt: p.endGameVotedAt,
       };
     });
 
@@ -1227,13 +1554,40 @@ export class GameEngineService {
       .filter((e) => e.gameId === g.id || e.gameId === cleanGameId)
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
-    const sunkBalls: number[] = Array.from(
-      new Set(
-        events
-          .filter((e) => e.ballNumber != null)
-          .map((e) => e.ballNumber!)
-      )
-    ).sort((a, b) => a - b);
+    const sunkEvents = memDb.gameEvents
+      .filter((e) => (e.gameId === g.id || e.gameId === cleanGameId) && e.ballNumber != null)
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+    const sunkBallsAudit: SunkBallAuditItem[] = sunkEvents.map((e) => {
+      const u = e.userId ? memDb.users.get(e.userId) : undefined;
+      return {
+        ballNumber: e.ballNumber!,
+        sunkByUserId: e.userId,
+        sunkByName: u?.firstName || u?.username || 'Player',
+        createdAt: e.createdAt,
+      };
+    });
+
+    const sunkBalls: number[] = Array.from(new Set(sunkBallsAudit.map((s) => s.ballNumber))).sort((a, b) => a - b);
+
+    let winnerCardsRevealed: RevealedWinnerCard[] | undefined = undefined;
+    if (g.winnerUserId && (g.status === 'COMPLETED' || g.status === 'CANCELLED')) {
+      const winnerCards = memDb.playerCards
+        .filter((c) => (c.gameId === g.id || c.gameId === cleanGameId) && c.userId === g.winnerUserId)
+        .sort((a, b) => a.cardValue - b.cardValue);
+
+      winnerCardsRevealed = winnerCards.map((c) => ({
+        cardValue: c.cardValue,
+        isRemoved: c.isRemoved,
+        removedAt: c.removedAt,
+        isScratchCard: c.isScratchCard,
+      }));
+    }
+
+    const totalPlayers = players.length;
+    const requiredConfirmations = Math.ceil(totalPlayers * 0.5);
+    const confirmedVotesCount = players.filter((p) => p.endGameVote === 'CONFIRMED').length;
+    const manipulatedVotesCount = players.filter((p) => p.endGameVote === 'MANIPULATED').length;
 
     const lastEvent = events[0]
       ? {
@@ -1279,6 +1633,13 @@ export class GameEngineService {
       completedAt: g.completedAt,
       players,
       sunkBalls,
+      sunkBallsAudit,
+      winnerCardsRevealed,
+      verificationStatus: g.verificationStatus || (g.status === 'COMPLETED' ? 'PENDING' : undefined),
+      payoutStatus: g.payoutStatus || (g.status === 'COMPLETED' ? 'PENDING' : undefined),
+      confirmedVotesCount,
+      manipulatedVotesCount,
+      requiredConfirmations,
       lastEvent,
       recentEvents,
       tableNumber: g.tableNumber,

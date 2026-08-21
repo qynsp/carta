@@ -55,6 +55,8 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
   const [votingDisband, setVotingDisband] = useState<boolean>(false);
   const [showDisbandConfirm, setShowDisbandConfirm] = useState<boolean>(false);
   const [disbandToast, setDisbandToast] = useState<string | null>(null);
+  const [submittingVote, setSubmittingVote] = useState<boolean>(false);
+  const [voteToast, setVoteToast] = useState<string | null>(null);
   const [touchSafetyEnabled, setTouchSafetyEnabled] = useState<boolean>(() => {
     const saved = localStorage.getItem('poolcards_touch_safety');
     return saved !== null ? saved === 'true' : true;
@@ -243,6 +245,40 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
     } finally {
       setVotingDisband(false);
       setShowDisbandConfirm(false);
+    }
+  };
+
+  const handleVerifyVote = async (vote: 'CONFIRMED' | 'MANIPULATED') => {
+    if (!token || submittingVote) return;
+    soundFx.playButtonClick();
+    setSubmittingVote(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/games/${gameId}/verify-vote`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ vote }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to submit verification vote');
+
+      if (vote === 'CONFIRMED') {
+        soundFx.playCoinWin();
+        setVoteToast(language === 'am' ? '✅ ጨዋታውን ትክክለኛ ነው ብለው አረጋግጠዋል!' : '✅ You confirmed the game as fair!');
+      } else {
+        soundFx.playScratch();
+        setVoteToast(language === 'am' ? '🚨 ጨዋታው ተጭበርብሯል ብለው ሪፖርት አድርገዋል!' : '🚨 You reported the game as manipulated!');
+      }
+      setTimeout(() => setVoteToast(null), 4000);
+
+      await fetchGameData();
+    } catch (err: any) {
+      setError(err.message || 'Error submitting verification vote');
+    } finally {
+      setSubmittingVote(false);
     }
   };
 
@@ -554,6 +590,13 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
       {disbandToast && (
         <div className="p-4 rounded-2xl bg-emerald-500/20 border-2 border-emerald-400 text-emerald-300 font-black text-sm text-center flex items-center justify-center gap-2 shadow-xl animate-fadeIn">
           <span>{disbandToast}</span>
+        </div>
+      )}
+
+      {/* Verification Vote Toast Message */}
+      {voteToast && (
+        <div className="p-4 rounded-2xl bg-emerald-500/20 border-2 border-emerald-400 text-emerald-300 font-black text-sm text-center flex items-center justify-center gap-2 shadow-xl animate-fadeIn">
+          <span>{voteToast}</span>
         </div>
       )}
 
@@ -917,26 +960,180 @@ export const PublicGameView: React.FC<PublicGameViewProps> = ({
               onCardClick={(val) => triggerShootAction(val)}
             />
           ) : game.status === 'COMPLETED' ? (
-            <div className="p-8 text-center space-y-4 my-auto">
-              <motion.div
-                animate={{ rotate: [-5, 5, -5], scale: [1, 1.1, 1] }}
-                transition={{ repeat: Infinity, duration: 2 }}
-                className="text-7xl"
-              >
-                🏆
-              </motion.div>
-              <div className="space-y-1">
-                <span className="px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs font-black uppercase tracking-wider">
-                  MATCH CONCLUDED
-                </span>
-                <h3 className="text-2xl font-black text-amber-400 uppercase">{t('matchEnded')}</h3>
+            <div className="space-y-4 my-auto">
+              {/* Winner Celebration / Status Banner */}
+              <div className="bg-zinc-900/90 border border-zinc-700/80 rounded-2xl p-4 text-center relative overflow-hidden">
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <span className="text-2xl">🏆</span>
+                  {game.verificationStatus === 'CONFIRMED' ? (
+                    <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      {language === 'am' ? 'በተጫዋቾች ስምምነት ጸድቋል • ተከፍሏል' : 'Verified Fair • Payout Released'}
+                    </span>
+                  ) : game.verificationStatus === 'MANIPULATED' ? (
+                    <span className="px-3 py-1 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5">
+                      <AlertCircle className="w-3.5 h-3.5" />
+                      {language === 'am' ? 'ተጭበርብሯል ተብሏል • 100% ተመላሽ ተደርጓል' : 'Manipulated • 100% Refunded'}
+                    </span>
+                  ) : (
+                    <span className="px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5 animate-pulse">
+                      <Clock className="w-3.5 h-3.5" />
+                      {language === 'am'
+                        ? `ማረጋገጫ በመጠበቅ ላይ (${game.confirmedVotesCount || 0}/${game.requiredConfirmations || Math.ceil(players.length * 0.5)} ድምጽ)`
+                        : `Verification Pending (${game.confirmedVotesCount || 0}/${game.requiredConfirmations || Math.ceil(players.length * 0.5)} needed)`}
+                    </span>
+                  )}
+                </div>
+
+                <h3 className="text-xl font-black text-amber-400 uppercase tracking-tight">
+                  {game.winnerName} {language === 'am' ? 'አሸንፏል!' : 'Won the Match!'}
+                </h3>
+                <p className="text-zinc-300 text-xs mt-1">
+                  {language === 'am'
+                    ? `የሽልማት ገቢ፡ ${game.winnerPayout} ብር (ጠቅላላ ፖት፡ ${game.totalPot} ብር)`
+                    : `Winner Pot: ${game.winnerPayout} ETB (Total Pool: ${game.totalPot} ETB)`}
+                </p>
               </div>
-              <p className="text-zinc-200 text-sm max-w-sm mx-auto font-medium">
-                <strong className="text-emerald-400">{game.winnerName}</strong>{' '}
-                {language === 'am'
-                  ? `ጨዋታውን አሸንፎ ${game.winnerPayout} ብር ወስዷል!`
-                  : `won this pool match and collected the ${game.winnerPayout} ETB pot!`}
-              </p>
+
+              {/* Anti-Manipulation Protection Box */}
+              <div className="bg-slate-900/80 border border-slate-700/70 rounded-2xl p-3.5 text-xs text-zinc-300 space-y-2">
+                <div className="flex items-center gap-2 font-bold text-amber-300">
+                  <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>{language === 'am' ? 'የማጭበርበር መከላከያ (Anti-Manipulation Protection)' : 'Anti-Manipulation Protection'}</span>
+                </div>
+                <p className="text-[11px] text-zinc-300 leading-relaxed">
+                  {t('antiManipulationNotice')}
+                </p>
+
+                {/* Vote Progress Bar */}
+                <div className="pt-1.5 space-y-1">
+                  <div className="flex justify-between text-[10px] font-bold">
+                    <span className="text-emerald-400">
+                      ✅ {t('confirmedVotesLabel')}: {game.confirmedVotesCount || 0}/{players.length}
+                    </span>
+                    <span className="text-rose-400">
+                      🚨 {t('manipulatedVotesLabel')}: {game.manipulatedVotesCount || 0}/{players.length}
+                    </span>
+                  </div>
+                  <div className="w-full bg-zinc-800 rounded-full h-2 overflow-hidden flex">
+                    <div
+                      className="bg-emerald-500 h-full transition-all"
+                      style={{
+                        width: `${((game.confirmedVotesCount || 0) / Math.max(players.length, 1)) * 100}%`,
+                      }}
+                    />
+                    <div
+                      className="bg-rose-500 h-full transition-all"
+                      style={{
+                        width: `${((game.manipulatedVotesCount || 0) / Math.max(players.length, 1)) * 100}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Winner Revealed Cards Audit */}
+              {game.winnerCardsRevealed && game.winnerCardsRevealed.length > 0 && (
+                <div className="bg-zinc-900/80 border border-zinc-800 rounded-2xl p-3 space-y-2">
+                  <p className="text-[11px] font-black uppercase tracking-wider text-zinc-400 flex items-center justify-between">
+                    <span>{t('winnerHandAudit')}</span>
+                    <span className="text-emerald-400 text-[10px]">
+                      {language === 'am' ? '5ቱም ካርዶች ተመተዋል' : 'All 5 Target Balls Sunk'}
+                    </span>
+                  </p>
+                  <div className="flex items-center gap-2 overflow-x-auto py-1">
+                    {game.winnerCardsRevealed.map((c) => (
+                      <div
+                        key={c.cardValue}
+                        className="flex flex-col items-center justify-center p-2 rounded-xl bg-zinc-800/90 border border-emerald-500/40 min-w-[52px]"
+                      >
+                        <PoolBall number={c.cardValue} size="sm" />
+                        <span className="text-[9px] font-black text-emerald-400 mt-1">✓ SUNK</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Sank Balls Chronological Audit */}
+              {game.sunkBallsAudit && game.sunkBallsAudit.length > 0 && (
+                <div className="bg-zinc-900/80 border border-zinc-800 rounded-2xl p-3 space-y-2">
+                  <p className="text-[11px] font-black uppercase tracking-wider text-zinc-400">
+                    {t('sunkBallsChronological')}
+                  </p>
+                  <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
+                    {game.sunkBallsAudit.map((s, idx) => (
+                      <div
+                        key={`${s.ballNumber}-${idx}`}
+                        className="flex items-center justify-between py-1 px-2 rounded-lg bg-zinc-800/50 border border-zinc-700/40 text-xs"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-zinc-500 font-mono text-[10px]">#{idx + 1}</span>
+                          <PoolBall number={s.ballNumber} size="sm" />
+                          <span className="font-bold text-zinc-200">{s.sunkByName || 'Player'}</span>
+                        </div>
+                        <span className="text-[10px] text-zinc-400 font-mono">
+                          {new Date(s.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Player Voting Controls */}
+              {isPlayerInGame && (game.verificationStatus === 'PENDING' || !game.verificationStatus) && (
+                <div className="pt-2 space-y-2">
+                  {(() => {
+                    const myPlayer = players.find((p) => p.userId === user?.id);
+                    const myVote = myPlayer?.endGameVote;
+
+                    return (
+                      <div className="space-y-2">
+                        {myVote && (
+                          <p className="text-center text-xs font-bold text-zinc-300">
+                            {language === 'am' ? 'የመረጡት ድምጽ፡' : 'Your submitted vote:'}{' '}
+                            <span className={myVote === 'CONFIRMED' ? 'text-emerald-400 font-black' : 'text-rose-400 font-black'}>
+                              {myVote === 'CONFIRMED'
+                                ? (language === 'am' ? '✅ ትክክለኛ ነው' : '✅ Fair Game')
+                                : (language === 'am' ? '🚨 ተጭበርብሯል' : '🚨 Manipulated')}
+                            </span>
+                          </p>
+                        )}
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleVerifyVote('CONFIRMED')}
+                            disabled={submittingVote || myVote === 'CONFIRMED'}
+                            className={`py-3 px-3 rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-lg ${
+                              myVote === 'CONFIRMED'
+                                ? 'bg-emerald-900/60 border-2 border-emerald-400 text-emerald-200'
+                                : 'bg-emerald-600 hover:bg-emerald-500 text-zinc-950 active:scale-95'
+                            } disabled:opacity-50`}
+                          >
+                            <CheckCircle2 className="w-4 h-4 shrink-0" />
+                            <span>{t('confirmFairGame')}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleVerifyVote('MANIPULATED')}
+                            disabled={submittingVote || myVote === 'MANIPULATED'}
+                            className={`py-3 px-3 rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-lg ${
+                              myVote === 'MANIPULATED'
+                                ? 'bg-rose-900/60 border-2 border-rose-400 text-rose-200'
+                                : 'bg-rose-600 hover:bg-rose-500 text-white active:scale-95'
+                            } disabled:opacity-50`}
+                          >
+                            <AlertCircle className="w-4 h-4 shrink-0" />
+                            <span>{t('reportManipulated')}</span>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
             </div>
           ) : game.status === 'CANCELLED' ? (
             <div className="p-8 text-center space-y-4 my-auto">

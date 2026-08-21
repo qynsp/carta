@@ -6,6 +6,8 @@ import {
   User,
   CardValue,
   GameStatus,
+  VerificationStatus,
+  EndGameVote,
   TransactionType,
   TransactionStatus,
   DepositStatus,
@@ -63,6 +65,8 @@ export interface DBGame {
   currentTurnIndex: number;
   winnerUserId?: string;
   tableNumber?: string;
+  verificationStatus?: VerificationStatus;
+  payoutStatus?: 'PENDING' | 'PAID' | 'REFUNDED';
   createdAt: string;
   startedAt?: string;
   completedAt?: string;
@@ -76,6 +80,8 @@ export interface DBGamePlayer {
   isWinner: boolean;
   isReady: boolean;
   votedDisband?: boolean;
+  endGameVote?: EndGameVote | null;
+  endGameVotedAt?: string;
   joinedAt: string;
 }
 
@@ -257,6 +263,11 @@ export async function initDatabase() {
       await client.query(`
         ALTER TABLE game_players ADD COLUMN IF NOT EXISTS is_ready BOOLEAN NOT NULL DEFAULT FALSE;
         ALTER TABLE game_players ADD COLUMN IF NOT EXISTS voted_disband BOOLEAN NOT NULL DEFAULT FALSE;
+        ALTER TABLE game_players ADD COLUMN IF NOT EXISTS end_game_vote VARCHAR(20);
+        ALTER TABLE game_players ADD COLUMN IF NOT EXISTS end_game_voted_at TIMESTAMP WITH TIME ZONE;
+
+        ALTER TABLE games ADD COLUMN IF NOT EXISTS verification_status VARCHAR(20) DEFAULT 'PENDING';
+        ALTER TABLE games ADD COLUMN IF NOT EXISTS payout_status VARCHAR(20) DEFAULT 'PENDING';
 
         CREATE TABLE IF NOT EXISTS platform_settings (
           id INT PRIMARY KEY DEFAULT 1,

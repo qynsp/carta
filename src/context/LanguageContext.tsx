@@ -87,6 +87,23 @@ export const DICTIONARY: Translations = {
   disbandProgress: { en: 'Disband Agreement', am: 'የይፍረስ ስምምነት' },
   disbandSuccessToast: { en: 'Game Disbanded! All entry fees have been fully refunded.', am: 'ጨዋታው ፈርሷል! የመግቢያ ክፍያው ለሁሉም ተጫዋቾች ተመላሽ ተደርጓል።' },
 
+  // Match Verification & Anti-Manipulation Protection
+  matchVerification: { en: 'Match Audit & Verification', am: 'የጨዋታው ማረጋገጫና ኦዲት' },
+  antiManipulationNotice: {
+    en: 'Anti-Manipulation Protection: At least 50% of joined players must confirm the match was played fairly. If majority reports manipulation, all players receive an immediate 100% refund!',
+    am: 'ማጭበርበርን ለመከላከል፡ ቢያንስ 50% ተጫዋቾች ጨዋታው ትክክለኛ መሆኑን ማረጋገጥ አለባቸው። አብዛኛው ተጫዋች "ተጭበርብሯል" ካለ የሁሉም ተጫዋቾች ገንዘብ 100% ወዲያውኑ ይመለሳል!',
+  },
+  sunkBallsChronological: { en: 'Sank Balls Chronological Audit', am: 'በጨዋታው የገቡ ኳሶች ቅደም ተከተል' },
+  winnerHandAudit: { en: "Winner's Secret Cards Verification", am: 'የአሸናፊው ሚስጥር ካርዶች ማረጋገጫ' },
+  confirmFairGame: { en: '✅ Confirm Fair Game', am: '✅ ትክክለኛ ጨዋታ ነው አረጋግጥ' },
+  reportManipulated: { en: '🚨 Report Manipulated & Refund', am: '🚨 ተጭበርብሯል (ይፍረስና ይመለስ)' },
+  verifiedBadge: { en: 'Official Fair Match Verified', am: 'በስምምነት ጸድቋል - ገንዘቡ ተከፍሏል' },
+  manipulatedBadge: { en: 'Manipulated Match - Full Refund Disbursed', am: 'በማጭበርበር የተሰረዘ - 100% ተመላሽ ተደርጓል' },
+  yourVoteRecorded: { en: 'Your vote has been submitted', am: 'ምርጫዎ ተመዝግቧል' },
+  waitingForVotes: { en: 'Awaiting player verification (50% needed)', am: 'የተጫዋቾች ማረጋገጫ በመጠበቅ ላይ (50% ያስፈልጋል)' },
+  confirmedVotesLabel: { en: 'Confirmed Fair', am: 'ትክክለኛ ነው ያሉት' },
+  manipulatedVotesLabel: { en: 'Reported Manipulated', am: 'ተጭበርብሯል ያሉት' },
+
   // Wallet
   addMoney: { en: '+ Add Money (Deposit)', am: '+ ብር አስገባ (Deposit)' },
   withdrawMoney: { en: '↑ Get Money (Withdraw)', am: '↑ ብር አውጣ (Withdraw)' },

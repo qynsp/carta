@@ -2,6 +2,10 @@ export type CardValue = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13;
 
 export type GameStatus = 'WAITING' | 'ACTIVE' | 'COMPLETED' | 'CANCELLED';
 
+export type VerificationStatus = 'PENDING' | 'CONFIRMED' | 'MANIPULATED';
+
+export type EndGameVote = 'CONFIRMED' | 'MANIPULATED';
+
 export type UserRole = 'PLAYER' | 'OPERATOR' | 'ADMIN';
 
 export type TransactionType =
@@ -56,7 +60,24 @@ export interface GamePlayerSummary {
   isWinner: boolean;
   isReady?: boolean;
   votedDisband?: boolean;
+  endGameVote?: EndGameVote;
+  endGameVotedAt?: string;
   // NOTE: Opponent card count or specific cards are NEVER exposed in public summary!
+}
+
+export interface SunkBallAuditItem {
+  ballNumber: number;
+  sunkByUserId?: string;
+  sunkByName?: string;
+  createdAt: string;
+  isWinnerCardMatch?: boolean;
+}
+
+export interface RevealedWinnerCard {
+  cardValue: CardValue;
+  isRemoved: boolean;
+  removedAt?: string;
+  isScratchCard?: boolean;
 }
 
 export interface GamePublicState {
@@ -81,6 +102,13 @@ export interface GamePublicState {
   completedAt?: string;
   players: GamePlayerSummary[];
   sunkBalls: number[];
+  sunkBallsAudit?: SunkBallAuditItem[];
+  winnerCardsRevealed?: RevealedWinnerCard[];
+  verificationStatus?: VerificationStatus;
+  payoutStatus?: 'PENDING' | 'PAID' | 'REFUNDED';
+  confirmedVotesCount?: number;
+  manipulatedVotesCount?: number;
+  requiredConfirmations?: number;
   lastEvent?: GameEventPublic;
   recentEvents?: GameEventPublic[];
   tableNumber?: string;
@@ -111,7 +139,10 @@ export type GameEventType =
   | 'GAME_WON'
   | 'GAME_CANCELLED'
   | 'DISBAND_VOTE'
-  | 'GAME_DISBANDED';
+  | 'GAME_DISBANDED'
+  | 'END_GAME_VOTE'
+  | 'GAME_VERIFIED'
+  | 'GAME_MANIPULATED_REFUND';
 
 export interface GameEventPublic {
   id: string;

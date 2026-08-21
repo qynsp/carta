@@ -179,6 +179,32 @@ export function translateGameEvent(
     return '🎮 አዲስ የፑል ጠረጴዛ ተፈጥሯል። ተጫዋቾች እየተጠበቁ ነው።';
   }
 
+  // 13. End Game Verification & Anti-Manipulation Events
+  if (type === 'END_GAME_VOTE') {
+    if (rawMsg.includes('confirmed the match as fair')) {
+      const match = rawMsg.match(/(?:✅\s*)?(.+?)\s+confirmed the match as fair\s*\[(\d+)\/(\d+)\s*confirmed\]/i);
+      if (match) {
+        return `✅ ${match[1].trim()} ጨዋታው ትክክለኛ መሆኑን አረጋግጧል [${match[2]}/${match[3]} አረጋግጠዋል]`;
+      }
+      return `✅ ተጫዋች ጨዋታው ትክክለኛ መሆኑን አረጋግጧል።`;
+    }
+    if (rawMsg.includes('reported the match as manipulated')) {
+      const match = rawMsg.match(/(?:🚨\s*)?(.+?)\s+reported the match as manipulated\s*\[(\d+)\/(\d+)\s*reports\]/i);
+      if (match) {
+        return `🚨 ${match[1].trim()} ጨዋታው ተጭበርብሯል ብሎ ሪፖርት አድርጓል [${match[2]}/${match[3]} ሪፖርት አድርገዋል]`;
+      }
+      return `🚨 ተጫዋች ጨዋታው ተጭበርብሯል ብሎ ሪፖርት አድርጓል።`;
+    }
+  }
+
+  if (type === 'GAME_VERIFIED') {
+    return '✅ ጨዋታው በ 50%+ ተጫዋቾች ስምምነት ትክክለኛ መሆኑ ተረጋግጦ ጸድቋል፤ የሽልማት ገንዘቡ ለአሸናፊው ተከፍሏል!';
+  }
+
+  if (type === 'GAME_MANIPULATED_REFUND') {
+    return '🚨 ጨዋታው በማጭበርበር ምክንያት በአብዛኛው ተጫዋች ድምጽ ተሰርዟል፤ የሁሉም ተጫዋቾች የመግቢያ ክፍያ 100% ተመላሽ ተደርጓል!';
+  }
+
   // Fallback direct keyword translations
   let translated = rawMsg;
   translated = translated.replace(/Turn passes to/gi, 'ተራ ወደ');
@@ -262,6 +288,30 @@ export function getGameEventStyle(type: GameEventType | undefined) {
         badgeBorder: 'border-rose-500/50',
         badgeText: 'text-rose-300',
         icon: '❌',
+        glow: 'shadow-rose-500/20',
+      };
+    case 'END_GAME_VOTE':
+      return {
+        badgeBg: 'bg-amber-500/20',
+        badgeBorder: 'border-amber-500/50',
+        badgeText: 'text-amber-300',
+        icon: '🗳️',
+        glow: 'shadow-amber-500/20',
+      };
+    case 'GAME_VERIFIED':
+      return {
+        badgeBg: 'bg-emerald-500/20',
+        badgeBorder: 'border-emerald-500/50',
+        badgeText: 'text-emerald-300',
+        icon: '✅',
+        glow: 'shadow-emerald-500/20',
+      };
+    case 'GAME_MANIPULATED_REFUND':
+      return {
+        badgeBg: 'bg-rose-500/20',
+        badgeBorder: 'border-rose-500/50',
+        badgeText: 'text-rose-300',
+        icon: '🚨',
         glow: 'shadow-rose-500/20',
       };
     case 'BALL_SUNK':

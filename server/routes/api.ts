@@ -253,6 +253,26 @@ apiRouter.post('/games/:id/disband-vote', requireAuth, async (req: AuthRequest, 
   }
 });
 
+// End Game Verification Vote (50% player confirmation & Anti-Manipulation Protection)
+apiRouter.post('/games/:id/verify-vote', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const { vote } = req.body;
+    if (vote !== 'CONFIRMED' && vote !== 'MANIPULATED') {
+      return res.status(400).json({ error: "Vote must be either 'CONFIRMED' or 'MANIPULATED'" });
+    }
+
+    const result = await GameEngineService.voteEndGameVerification(
+      req.params.id,
+      req.user!.userId,
+      vote
+    );
+    const game = await GameEngineService.getPublicGameState(req.params.id);
+    return res.json({ success: true, ...result, game });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message });
+  }
+});
+
 // Get PRIVATE Game State (Public state + ONLY calling user's unremoved cards)
 apiRouter.get('/games/:id/private-state', requireAuth, async (req: AuthRequest, res: Response) => {
   try {

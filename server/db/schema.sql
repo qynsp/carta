@@ -95,6 +95,11 @@ CREATE TABLE IF NOT EXISTS game_players (
 
 ALTER TABLE game_players ADD COLUMN IF NOT EXISTS is_ready BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE game_players ADD COLUMN IF NOT EXISTS voted_disband BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE game_players ADD COLUMN IF NOT EXISTS end_game_vote VARCHAR(20);
+ALTER TABLE game_players ADD COLUMN IF NOT EXISTS end_game_voted_at TIMESTAMP WITH TIME ZONE;
+
+ALTER TABLE games ADD COLUMN IF NOT EXISTS verification_status VARCHAR(20) DEFAULT 'PENDING';
+ALTER TABLE games ADD COLUMN IF NOT EXISTS payout_status VARCHAR(20) DEFAULT 'PENDING';
 
 CREATE INDEX IF NOT EXISTS idx_game_players_game_id ON game_players(game_id);
 CREATE INDEX IF NOT EXISTS idx_game_players_user_id ON game_players(user_id);
